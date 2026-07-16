@@ -1,0 +1,13 @@
+package com.example.Healthcare_BE.chat.repository;
+
+import com.example.Healthcare_BE.chat.entity.ChatSession;
+import com.example.Healthcare_BE.chat.entity.ChatType;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.List;
+import java.util.UUID;
+
+public interface ChatSessionRepository extends JpaRepository<ChatSession, UUID> {
+
+    List<ChatSession> findByUserIdAndTypeOrderByCreatedAtDesc(UUID userId, ChatType type);
+}
