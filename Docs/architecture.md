@@ -60,7 +60,7 @@ AI가 필요로 하는 모든 컨텍스트(프로필·인바디·설정·대화 
 
 ## 4. AI 서버 계약 (백엔드 → AI)
 
-**요청/응답/`result` 스키마는 [`api.md`](./api.md) 4장에 있다. AI 서버 담당자와 합의가 필요한 초안이다.**
+**요청/응답/`result` 스키마는 [`api.md`](./api.md) 4장에 있다. AI 서버와 실제로 연동되어 동작 중이다.**
 
 DB에는 `result`를 통째로 저장하지 않고 정규화된 테이블(`routines`/`routine_exercises`,
 `meal_plans`/`meal_plan_days`/`meal_plan_meals`)에 나눠 담는다 — 프론트/AI에 오가는 JSON 모양은
@@ -97,11 +97,11 @@ com.example.Healthcare_BE
     각 도메인 = {도메인}/entity, {도메인}/repository
 ```
 
-컨트롤러·서비스·AI 클라이언트·CORS/Security 설정은 아직 구현 전이다 (엔티티·리포지토리·DB
-연결까지만 완료). 구현 시 API 명세(`api.md`)에 맞춰 `config`(RestClient, CORS, Security),
-`ai`(AI 클라이언트 + DTO) 패키지가 추가될 예정이다.
+컨트롤러·서비스·AI 클라이언트·Security 설정은 구현이 끝났다 (각 도메인의 controller/service,
+`chat/service/RestClientAiClient`, `config/SecurityConfig`).
 
-프론트 서버가 별도 오리진이므로 CORS 설정이 필요하다.
+프론트 서버가 별도 오리진(`https://healthchatbot-front-end-u557.vercel.app`)이므로
+`SecurityConfig`에 해당 오리진을 허용하는 CORS 설정을 추가했다.
 Spring Security는 기본값이 전 요청 인증이므로, MVP에서는 명시적으로 permitAll 처리한다.
 (인증 도입 시 이 지점만 JWT 검증으로 교체 — [stack-architecture] 참고)
 
