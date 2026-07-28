@@ -3,6 +3,12 @@
 
 `architecture.md`의 스키마 스케치를 실제 DDL로 확정한 문서. 스키마의 단일 출처(single source of truth)는 이 파일이다.
 
+> **[2026-07 갱신] 회원가입/프로필 화면 대응**
+> - `users`: 기본 프로필(닉네임·생년월일·이메일·전화·자기소개·이미지), 운동 목표(`goals` 복수), 운동 경력·계획(빈도·시간·목표수치) 컬럼 추가. `target_gain_kg` 제거.
+> - `inbody_records`: `body_fat_pct`(체지방률) 추가. 체중은 이 테이블에만 유지(회원가입 = 인바디 입력).
+> - 신설: `user_preferences`(운동 선호), `user_ai_settings`(AI 맞춤 설정), `user_notification_settings`(알림 설정).
+> - '계정·보안'(비번/2단계인증/소셜연동)은 인증 도입 단계로 미룸.
+
 ## 1. 전제
 
 - DB는 Supabase Postgres, 백엔드(Railway)가 **유일한 DB 클라이언트**다. 프론트/AI 서버는 DB에 직접 접근하지 않는다.
@@ -14,6 +20,9 @@
 ```mermaid
 erDiagram
     users ||--o{ inbody_records : "측정 이력"
+    users ||--o| user_preferences : "운동 선호"
+    users ||--o| user_ai_settings : "AI 설정"
+    users ||--o| user_notification_settings : "알림 설정"
     users ||--o{ chat_sessions : "대화 세션"
     chat_sessions ||--o{ chat_messages : "메시지"
     chat_messages ||--o| routines : "코칭 결과"
@@ -25,9 +34,21 @@ erDiagram
     users {
         uuid id PK
         text name
+        text nickname
         text gender
+        date birth_date
+        text email
+        text phone
+        text bio
+        text profile_image_url
         numeric height_cm
-        numeric target_gain_kg
+        array goals
+        text experience_level
+        int workout_frequency_per_week
+        text workout_duration
+        numeric target_weight_kg
+        numeric target_muscle_kg
+        date goal_target_date
         text previous_workout
     }
     inbody_records {
@@ -38,6 +59,25 @@ erDiagram
         int bmr_kcal
         numeric skeletal_muscle_mass_kg
         numeric body_fat_mass_kg
+        numeric body_fat_pct
+    }
+    user_preferences {
+        uuid id PK
+        uuid user_id FK
+        array preferred_workout_types
+        array injury_parts
+    }
+    user_ai_settings {
+        uuid id PK
+        uuid user_id FK
+        text recommendation_style
+        text explanation_level
+        text coach_tone
+    }
+    user_notification_settings {
+        uuid id PK
+        uuid user_id FK
+        text receive_channel
     }
     chat_sessions {
         uuid id PK
@@ -95,25 +135,49 @@ Supabase SQL Editor에 바로 붙여넣을 실행 순서대로 합친 스크립�
 
 ### users
 
-성명·성별·키·목표 증가량·전날 운동. 측정할 때마다 바뀌지 않는 프로필 속성만 담는다.
+기본 프로필·운동 목표·운동 계획. 측정할 때마다 바뀌지 않는 프로필 속성을 담는다.
+회원가입1(기본정보/운동목표/운동환경)과 프로필 "기본 프로필"·"운동 목표" 탭에 대응.
 
 ```sql
 create table users (
   id               uuid primary key default gen_random_uuid(),
-  name             text not null,                                    -- 성명
-  gender           text not null check (gender in ('MALE', 'FEMALE')), -- 성별
-  height_cm        numeric(4,1) not null check (height_cm > 0),      -- 키
-  target_gain_kg   numeric(4,1),                                     -- 목표 증가량
+  name             text not null,                                     -- 이름
+  nickname         text,                                              -- 닉네임
+  gender           text not null check (gender in ('MALE', 'FEMALE')),-- 성별
+  birth_date       date,                                              -- 생년월일
+  email            text,                                              -- 이메일(표시용, 인증 추후)
+  phone            text,                                              -- 휴대전화 번호
+  bio              text,                                              -- 자기소개
+  profile_image_url text,                                             -- 프로필 이미지 URL
+  height_cm        numeric(4,1) not null check (height_cm > 0),       -- 키
+
+  -- 운동 목표(복수 선택). 허용값(백엔드 검증):
+  --   MUSCLE_GAIN, FAT_LOSS, FITNESS, POSTURE, REHAB, HABIT
+  goals            text[] not null default '{}',
+
+  -- 운동 경력: UNDER_6M, M6_1Y, Y1_2Y, OVER_2Y
+  experience_level text check (experience_level in ('UNDER_6M','M6_1Y','Y1_2Y','OVER_2Y')),
+
+  workout_frequency_per_week integer check (workout_frequency_per_week between 1 and 7), -- 주당 횟수
+  workout_duration text check (workout_duration in ('UNDER_30','M60','M90','OVER_120')), -- 1회 시간
+  target_weight_kg numeric(4,1),                                      -- 목표 체중
+  target_muscle_kg numeric(4,1),                                      -- 목표 골격근량
+  goal_target_date date,                                              -- 목표 달성 예정일
+
   previous_workout text check (previous_workout in ('UPPER_BODY', 'LOWER_BODY')), -- 전날 운동
   created_at       timestamptz not null default now()
 );
 ```
 
-`target_gain_kg`, `previous_workout`은 nullable — 목표 미설정 상태와 첫 이용(운동 이력 없음)이 존재한다.
+- 대부분의 컬럼이 nullable — 회원가입 스텝을 나중에 완성하거나("나중에 설정") 목표 미설정 상태가 존재한다.
+- `goals`는 복수 선택이라 배열(`text[]`). Postgres 배열엔 CHECK를 걸기 번거로워 **허용값 검증은 백엔드에서** 한다.
+- 회원가입 시 여러 스텝의 입력을 마지막에 한 번에 저장한다 → 개별 컬럼은 nullable로 두고 최종 저장 시 채운다.
+- '계정·보안'(비밀번호/2단계인증/소셜 연동)은 인증 도입 단계로 미뤄 이 테이블에 포함하지 않는다.
 
 ### inbody_records
 
-체중·기초대사량·골격근량·체지방량. 메인 하단 패널은 이 중 최신 1건을 표시한다.
+체중·기초대사량·골격근량·체지방량·체지방률. 메인 하단 패널은 이 중 최신 1건을 표시한다.
+회원가입2(인바디 측정 입력)와 프로필 "신체 정보"에 대응 — 회원가입은 인바디 측정값을 입력받는 단계다.
 
 ```sql
 create table inbody_records (
@@ -124,6 +188,7 @@ create table inbody_records (
   bmr_kcal                integer      not null check (bmr_kcal > 0),       -- 기초대사량
   skeletal_muscle_mass_kg numeric(5,2) not null check (skeletal_muscle_mass_kg > 0), -- 골격근량
   body_fat_mass_kg        numeric(5,2) not null check (body_fat_mass_kg >= 0),       -- 체지방량
+  body_fat_pct            numeric(4,1)          check (body_fat_pct >= 0),           -- 체지방률(%)
   created_at              timestamptz not null default now(),
   unique (user_id, measured_at)
 );
@@ -132,7 +197,76 @@ create index idx_inbody_user_measured
   on inbody_records (user_id, measured_at desc);
 ```
 
-인덱스는 `GET /api/inbody/recent`의 "유저의 최신 1건" 조회 패턴에 대응한다 (`where user_id = ? order by measured_at desc limit 1`).
+- 인덱스는 `GET /api/inbody/recent`의 "유저의 최신 1건" 조회 패턴에 대응한다 (`where user_id = ? order by measured_at desc limit 1`).
+- 체중은 이 테이블에만 둔다 — 회원가입 시 입력한 키·체중도 인바디 측정값의 일부로 여기에 저장하며, users에 중복 보관하지 않는다.
+- 화면 항목은 골격근량·체지방량·체지방률·기초대사량 4종이다 (BMI·내장지방·허리둘레는 미포함).
+
+### user_preferences
+
+프로필 "운동 선호 설정" 탭 중 순수 선호(다중선택)만 담는다. 유저 1:1.
+장소·운동수준·보유기구 항목은 화면 개편으로 제거되어 포함하지 않는다.
+
+```sql
+create table user_preferences (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null unique references users(id) on delete cascade,
+  -- 선호 운동: WEIGHT, BODYWEIGHT, CARDIO, STRETCHING, FUNCTIONAL
+  preferred_workout_types text[] not null default '{}',
+  -- 불편한 부위: NECK, SHOULDER, ELBOW, WAIST, KNEE, WRIST, ANKLE, NONE
+  injury_parts            text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+`user_id`에 `unique`를 걸어 유저당 1행을 강제한다. 두 값 모두 다중선택이라 배열이며,
+허용값 검증은 백엔드에서 한다. `injury_parts`는 운동 추천 조절용 참고 정보이지 의학적 진단이 아니다.
+
+### user_ai_settings
+
+프로필 "AI 맞춤 설정" 탭. 유저 1:1. 단일선택 3종과 자동추천 토글 5종.
+
+```sql
+create table user_ai_settings (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null unique references users(id) on delete cascade,
+  recommendation_style text check (recommendation_style in ('SAFETY','EFFECT','SIMPLE','EXPLORE')), -- 추천 방식
+  explanation_level    text check (explanation_level in ('SIMPLE','STANDARD','DETAILED')),          -- 설명 수준
+  coach_tone           text check (coach_tone in ('CALM','PRO','MOTIVATION','CONCISE')),            -- 코치 말투
+  auto_daily_routine    boolean not null default true,   -- 오늘의 운동 루틴 추천
+  auto_intensity_adjust boolean not null default true,   -- 운동 기록 기반 강도 조절
+  auto_weakpart_alert   boolean not null default true,   -- 부족한 운동 부위 알림
+  auto_restday_suggest  boolean not null default false,  -- 휴식일 추천
+  auto_posture_tip      boolean not null default true,   -- 운동 자세 주의사항 제공
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+이 설정은 AI 코칭 호출 시 컨텍스트로 실려 응답 성향을 조절한다 (context assembler가 조립).
+
+### user_notification_settings
+
+프로필 "알림 설정" 탭. 유저 1:1. 알림 토글 7종과 수신 방식.
+
+```sql
+create table user_notification_settings (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null unique references users(id) on delete cascade,
+  notify_workout_start   boolean not null default true,   -- 운동 시작 알림
+  notify_weekly_goal     boolean not null default true,   -- 주간 목표 진행 알림
+  notify_long_absence    boolean not null default true,   -- 장기간 미운동 알림
+  notify_ai_recommend    boolean not null default false,  -- AI 추천 루틴 알림
+  notify_body_update     boolean not null default true,   -- 신체 정보 업데이트 알림
+  notify_workout_summary boolean not null default true,   -- 운동 기록 요약 알림
+  notify_service_event   boolean not null default false,  -- 서비스 공지 및 이벤트
+  receive_channel text not null default 'APP' check (receive_channel in ('APP','EMAIL','SMS')), -- 수신 방식
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+MVP는 알림 발송 자체를 구현하지 않을 수 있으나, 설정값은 화면 유지를 위해 저장한다.
 
 ### chat_sessions
 
@@ -243,9 +377,9 @@ create table meal_plan_meals (
 백엔드가 설정값으로 참조할 수 있도록 id를 고정한다.
 
 ```sql
-insert into users (id, name, gender, height_cm, target_gain_kg, previous_workout)
+insert into users (id, name, gender, height_cm, previous_workout)
 values ('00000000-0000-0000-0000-000000000001',
-        '홍길동', 'MALE', 175.0, 3.0, 'UPPER_BODY');
+        '홍길동', 'MALE', 175.0, 'UPPER_BODY');
 ```
 
 ```properties
@@ -311,8 +445,8 @@ DDL 적용은 MVP에서는 Supabase SQL Editor에서 직접 실행한다. 스키
 
 ## 7. 미결 사항
 
-- **인바디 입력 경로 미정** — 사용자 직접 입력 / 기기·API 연동 / 시드만. 현재 설계에 쓰기 경로가 없다.
-  직접 입력이라면 `POST /api/inbody`가 추가되며, **테이블 구조는 그대로**다.
+- **인바디 입력 경로** — 사용자 직접 입력으로 확정(회원가입2에서 측정값 입력). `POST /api/inbody` 신설 예정.
+  "인바디 없이 시작" 옵션은 제거되어 인바디는 항상 입력된다(관련 컬럼 not null 유지).
 - **`unique (user_id, measured_at)`** — 하루 1회 측정을 가정했다. 하루 여러 번 측정을 허용해야 하면
   이 제약을 빼고 `measured_at`을 `timestamptz`로 바꾼다.
 - **`chat_sessions.title` 생성 규칙 미정** — 첫 사용자 메시지를 잘라 쓰는 방식을 가정하고 nullable로 뒀다.
