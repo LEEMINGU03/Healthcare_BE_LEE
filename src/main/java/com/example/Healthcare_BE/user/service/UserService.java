@@ -38,7 +38,6 @@ public class UserService {
                 user.getName(),
                 user.getGender(),
                 user.getHeightCm(),
-                user.getTargetGainKg(),
                 user.getPreviousWorkout());
     }
 }

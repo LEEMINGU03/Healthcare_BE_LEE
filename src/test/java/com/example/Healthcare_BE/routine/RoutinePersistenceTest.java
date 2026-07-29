@@ -42,7 +42,7 @@ class RoutinePersistenceTest {
     @Test
     void 루틴과_운동_항목이_함께_저장되고_조회된다() {
         User user = userRepository.save(
-                new User("테스트유저", Gender.MALE, BigDecimal.valueOf(175.0), BigDecimal.valueOf(3.0), null));
+                new User("테스트유저", Gender.MALE, BigDecimal.valueOf(175.0), null));
         ChatSession session = chatSessionRepository.save(
                 new ChatSession(user, ChatType.COACHING, "테스트 세션"));
         ChatMessage message = chatMessageRepository.save(
