@@ -32,6 +32,7 @@ public class InbodyService {
                 record.getWeightKg(),
                 record.getSkeletalMuscleMassKg(),
                 record.getBodyFatMassKg(),
+                record.getBodyFatPct(),
                 record.getBmrKcal());
     }
 }

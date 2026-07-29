@@ -12,6 +12,7 @@ public record InbodyRecentResponse(
         BigDecimal weightKg,
         BigDecimal skeletalMuscleMassKg,
         BigDecimal bodyFatMassKg,
+        BigDecimal bodyFatPct,
         Integer bmrKcal
 ) {
 }

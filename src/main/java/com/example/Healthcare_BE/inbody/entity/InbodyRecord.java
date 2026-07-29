@@ -48,16 +48,20 @@ public class InbodyRecord {
     @Column(name = "body_fat_mass_kg", nullable = false)
     private BigDecimal bodyFatMassKg;
 
+    @Column(name = "body_fat_pct")
+    private BigDecimal bodyFatPct;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
     public InbodyRecord(User user, LocalDate measuredAt, BigDecimal weightKg, Integer bmrKcal,
-                         BigDecimal skeletalMuscleMassKg, BigDecimal bodyFatMassKg) {
+                         BigDecimal skeletalMuscleMassKg, BigDecimal bodyFatMassKg, BigDecimal bodyFatPct) {
         this.user = user;
         this.measuredAt = measuredAt;
         this.weightKg = weightKg;
         this.bmrKcal = bmrKcal;
         this.skeletalMuscleMassKg = skeletalMuscleMassKg;
         this.bodyFatMassKg = bodyFatMassKg;
+        this.bodyFatPct = bodyFatPct;
     }
 }
