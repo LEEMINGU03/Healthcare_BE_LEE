@@ -30,10 +30,9 @@ public class User {
     private String name;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
     private Gender gender;
 
-    @Column(name = "height_cm", nullable = false)
+    @Column(name = "height_cm")
     private BigDecimal heightCm;
 
     @Column(name = "target_gain_kg")
@@ -53,5 +52,13 @@ public class User {
         this.heightCm = heightCm;
         this.targetGainKg = targetGainKg;
         this.previousWorkout = previousWorkout;
+    }
+
+    /**
+     * 소셜 로그인 최초 가입 시점 — 이름 외 프로필(성별·키 등)은 아직 없다.
+     * 나머지는 프로필 완성 단계에서 채운다.
+     */
+    public User(String name) {
+        this(name, null, null, null, null);
     }
 }

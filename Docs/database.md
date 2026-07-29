@@ -1,5 +1,5 @@
 
-# DB 설계 (Supabase Postgres / MVP)
+# DB 설계 (PostgreSQL / MVP)
 
 `architecture.md`의 스키마 스케치를 실제 DDL로 확정한 문서. 스키마의 단일 출처(single source of truth)는 이 파일이다.
 
@@ -8,11 +8,18 @@
 > - `inbody_records`: `body_fat_pct`(체지방률) 추가. 체중은 이 테이블에만 유지(회원가입 = 인바디 입력).
 > - 신설: `user_preferences`(운동 선호), `user_ai_settings`(AI 맞춤 설정), `user_notification_settings`(알림 설정).
 > - '계정·보안'(비번/2단계인증/소셜연동)은 인증 도입 단계로 미룸.
+>
+> **[2026-07 갱신] 구글 소셜 로그인 도입**
+> - 신설: `user_social_accounts` — `users`에 컬럼을 얹지 않고 별도 테이블로 분리. 유저 1명이 여러
+>   provider(구글, 추후 카카오 등)를 연결할 수 있는 구조.
+> - 신설: `refresh_tokens` — 세션이 아닌 JWT(Access/Refresh Token) 방식 채택. 둘 다 JWT이며,
+>   Refresh Token은 발급한 토큰 문자열을 DB에도 그대로 저장해 로그아웃 시 그 행만 지우면
+>   즉시 무효화할 수 있게 한다(서명 검증 + DB 존재 확인 하이브리드).
 
 ## 1. 전제
 
-- DB는 Supabase Postgres, 백엔드(Railway)가 **유일한 DB 클라이언트**다. 프론트/AI 서버는 DB에 직접 접근하지 않는다.
-- MVP는 로그인이 없다. 고정 더미 유저 1명을 시드해두고 백엔드가 그 id를 설정값으로 들고 쓴다.
+- DB는 PostgreSQL, 백엔드(Railway)가 **유일한 DB 클라이언트**다. 프론트/AI 서버는 DB에 직접 접근하지 않는다.
+- 구글 소셜 로그인 + JWT(Access/Refresh Token)로 유저를 식별한다 (고정 더미 유저 방식은 폐기, 4장 참고).
 - 인바디는 시계열 데이터다 (와이어프레임 "Last Data 2026.06.20", 막대 그래프).
 
 ## 2. ERD
@@ -20,6 +27,8 @@
 ```mermaid
 erDiagram
     users ||--o{ inbody_records : "측정 이력"
+    users ||--o{ user_social_accounts : "소셜 로그인 연결"
+    users ||--o{ refresh_tokens : "발급된 refresh token"
     users ||--o| user_preferences : "운동 선호"
     users ||--o| user_ai_settings : "AI 설정"
     users ||--o| user_notification_settings : "알림 설정"
@@ -50,6 +59,18 @@ erDiagram
         numeric target_muscle_kg
         date goal_target_date
         text previous_workout
+    }
+    user_social_accounts {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text provider_user_id
+    }
+    refresh_tokens {
+        uuid id PK
+        uuid user_id FK
+        text token
+        timestamptz expires_at
     }
     inbody_records {
         uuid id PK
@@ -130,7 +151,7 @@ erDiagram
 
 ## 3. DDL
 
-Supabase SQL Editor에 바로 붙여넣을 실행 순서대로 합친 스크립트는 [`schema.sql`](./schema.sql)에 있다.
+DB 클라이언트(psql/pgAdmin 등)에 바로 붙여넣을 실행 순서대로 합친 스크립트는 [`schema.sql`](./schema.sql)에 있다.
 아래는 테이블별 설계 근거와 함께 보는 설명용이며, 스키마를 바꿀 때는 이 문서와 `schema.sql`을 함께 수정한다.
 
 ### users
@@ -143,13 +164,13 @@ create table users (
   id               uuid primary key default gen_random_uuid(),
   name             text not null,                                     -- 이름
   nickname         text,                                              -- 닉네임
-  gender           text not null check (gender in ('MALE', 'FEMALE')),-- 성별
+  gender           text check (gender in ('MALE', 'FEMALE')),         -- 성별 (소셜 로그인 직후엔 미입력)
   birth_date       date,                                              -- 생년월일
   email            text,                                              -- 이메일(표시용, 인증 추후)
   phone            text,                                              -- 휴대전화 번호
   bio              text,                                              -- 자기소개
   profile_image_url text,                                             -- 프로필 이미지 URL
-  height_cm        numeric(4,1) not null check (height_cm > 0),       -- 키
+  height_cm        numeric(4,1) check (height_cm > 0),                -- 키 (소셜 로그인 직후엔 미입력)
 
   -- 운동 목표(복수 선택). 허용값(백엔드 검증):
   --   MUSCLE_GAIN, FAT_LOSS, FITNESS, POSTURE, REHAB, HABIT
@@ -170,9 +191,50 @@ create table users (
 ```
 
 - 대부분의 컬럼이 nullable — 회원가입 스텝을 나중에 완성하거나("나중에 설정") 목표 미설정 상태가 존재한다.
+- `gender`/`height_cm`도 nullable이다 — 구글 소셜 로그인 직후엔 이름 정도만 있고 성별·키는 아직
+  입력되지 않은 상태라, 최초 계정 생성 시점엔 채울 수 없다. 프로필 완성 단계에서 채운다.
 - `goals`는 복수 선택이라 배열(`text[]`). Postgres 배열엔 CHECK를 걸기 번거로워 **허용값 검증은 백엔드에서** 한다.
 - 회원가입 시 여러 스텝의 입력을 마지막에 한 번에 저장한다 → 개별 컬럼은 nullable로 두고 최종 저장 시 채운다.
-- '계정·보안'(비밀번호/2단계인증/소셜 연동)은 인증 도입 단계로 미뤄 이 테이블에 포함하지 않는다.
+- '계정·보안'(비밀번호/2단계인증)은 인증 도입 단계로 미뤄 이 테이블에 포함하지 않는다. 소셜 로그인
+  연결 정보는 `user_social_accounts`(다음 절)에 별도로 둔다.
+
+### user_social_accounts
+
+소셜 로그인 연결 정보. `users`에 컬럼을 얹지 않고 별도 테이블로 분리했다 — `user_preferences` 등
+기존 1:1 보조 테이블과 같은 패턴이다. 유저 1명이 여러 provider(구글, 추후 카카오 등)를 연결할 수
+있는 구조라 provider가 늘어나도 `users` 스키마 변경이 필요 없다.
+
+```sql
+create table user_social_accounts (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid not null references users(id) on delete cascade,
+  provider         text not null check (provider in ('GOOGLE')), -- 추후 KAKAO 등 추가
+  provider_user_id text not null,                                -- 구글 sub
+  created_at       timestamptz not null default now(),
+  unique (provider, provider_user_id),
+  unique (user_id, provider)
+);
+```
+
+- `unique (provider, provider_user_id)`: 같은 구글 계정이 서로 다른 유저에 중복 연결되는 것을 막는다.
+- `unique (user_id, provider)`: 한 유저가 같은 provider를 두 번 연결하는 것을 막는다.
+
+### refresh_tokens
+
+로그인 세션 대신 JWT(Access/Refresh Token) 방식을 쓴다. Access Token은 서명만 검증하는
+stateless JWT라 DB에 저장하지 않는다. Refresh Token도 JWT이지만, 발급한 토큰 문자열을 이
+테이블에 그대로 저장해둔다 — 검증 시 서명뿐 아니라 DB에 그 행이 아직 있는지도 확인해서,
+로그아웃/연동 해제 시 행만 지우면 만료 전이라도 즉시 무효화할 수 있다.
+
+```sql
+create table refresh_tokens (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references users(id) on delete cascade,
+  token      text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+```
 
 ### inbody_records
 
@@ -372,22 +434,18 @@ create table meal_plan_meals (
 `unique (meal_plan_id, day_of_week)`와 `unique (day_id, slot)`이 각각 "하루는 요일당 1행",
 "한 끼는 슬롯당 1행"을 강제한다 — 같은 날 아침이 중복 저장되는 경우가 구조적으로 불가능하다.
 
-## 4. 시드 (더미 유저)
+## 4. 시드 (더미 유저) — 폐기됨
 
-백엔드가 설정값으로 참조할 수 있도록 id를 고정한다.
+로그인이 없던 초기 MVP 단계에서 백엔드가 설정값으로 고정 유저 id를 참조하던 방식. 아래 시드와
+`app.mvp.dummy-user-id` 프로퍼티는 구글 소셜 로그인 + JWT 도입 이후 더 이상 쓰지 않는다 —
+`UserService.getCurrentUser()`가 `SecurityContext`의 실제 로그인 유저를 조회하도록 바뀌었다.
+과거 방식 기록으로만 남겨둔다.
 
 ```sql
 insert into users (id, name, gender, height_cm, previous_workout)
 values ('00000000-0000-0000-0000-000000000001',
         '홍길동', 'MALE', 175.0, 'UPPER_BODY');
 ```
-
-```properties
-# application.properties
-app.mvp.dummy-user-id=00000000-0000-0000-0000-000000000001
-```
-
-인증 도입 시 이 설정을 제거하고 JWT에서 유저를 꺼내도록 교체한다. 그 지점 외에는 스키마 변경이 없다.
 
 ## 5. 설계 판단
 
@@ -400,12 +458,13 @@ app.mvp.dummy-user-id=00000000-0000-0000-0000-000000000001
 AI 응답에 필드가 추가·변경될 때마다 컬럼 마이그레이션이 필요해진다. `sets`/`reps`처럼 아직 세부
 구조가 불확실한 값은 텍스트 컬럼으로 남겨 이 비용을 낮췄다.
 
-**RLS 미적용.** Supabase RLS는 클라이언트가 DB에 직접 붙을 때의 방어 수단이다. 이 구조에서는 백엔드만
-DB에 접근하고 권한 판단도 백엔드가 하므로 MVP에서는 켜지 않는다. 다만 나중에 프론트가 Supabase SDK로
+**RLS 미적용.** RLS(Row Level Security)는 클라이언트가 DB에 직접 붙을 때의 방어 수단이다. 이 구조에서는
+백엔드만 DB에 접근하고 권한 판단도 백엔드가 하므로 MVP에서는 켜지 않는다. 다만 나중에 프론트가 DB에
 직접 붙는 설계가 나오면 그 시점에 반드시 재검토해야 한다.
 
-**`public.users`는 Supabase `auth.users`와 별개다.** 인증 도입 시 두 테이블을 지우고 합치는 게 아니라,
-`public.users`에 `auth_id uuid references auth.users(id)` 컬럼을 추가해 연결하는 방향이 자연스럽다.
+**소셜 로그인은 `users`에 컬럼을 얹지 않고 `user_social_accounts`로 분리했다.** 구글 하나만 있을 땐
+컬럼 하나(`auth_provider_id` 등)로도 충분하지만, 카카오 등 다른 provider를 추가로 연결할 계획이라
+처음부터 별도 테이블로 뺐다 — provider가 늘어도 `users` 스키마 변경이 없다.
 
 **cascade 삭제.** 유저 삭제 시 인바디·세션이, 세션 삭제 시 메시지가, 메시지 삭제 시 그 메시지의
 루틴/식단표(및 하위 운동·요일·끼니)가 함께 지워진다. 고아 행이 남을 경로가 없다.
@@ -419,13 +478,13 @@ implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 runtimeOnly 'org.postgresql:postgresql'
 ```
 
-**연결 방식: Supavisor session mode 풀러 (5432).**
+**연결 방식: 로컬은 직접 접속.** (Supabase/Supavisor 풀러는 더 이상 쓰지 않는다.)
 
 ```properties
-# application.properties (커밋됨)
+# application.properties (커밋됨) — url/username은 값을 비워두고 로컬에서 채운다
 spring.profiles.active=local
-spring.datasource.url=jdbc:postgresql://aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres?sslmode=require
-spring.datasource.username=postgres.qvuuptnvrybesmhuoxdv
+spring.datasource.url=
+spring.datasource.username=
 ```
 
 비밀번호는 커밋되는 파일에 두지 않는다.
@@ -435,12 +494,10 @@ spring.datasource.username=postgres.qvuuptnvrybesmhuoxdv
   `spring.datasource.password`로 매핑하며, 환경변수가 프로퍼티 파일보다 우선하므로
   `spring.profiles.active=local`이 켜져 있어도 Railway 값이 이긴다.
 
-Supabase 풀러는 포트로 모드가 갈린다 — **5432는 session mode, 6543은 transaction mode**다.
-transaction mode였다면 서버 사이드 prepared statement가 깨져 `prepareThreshold=0`이 필요하지만,
-session mode는 커넥션을 세션 동안 독점하므로 Hibernate가 그대로 동작한다. **이 설정에는 붙이지 않는다.**
-나중에 커넥션 수 문제로 6543으로 옮기게 되면 그때 `prepareThreshold=0`을 추가해야 한다.
+프로덕션(Railway) DB를 어디에 호스팅할지, 커넥션 풀러를 쓸지는 아직 미결이다 (7장 참고).
+결정되면 이 절을 그 환경의 접속 방식에 맞춰 갱신한다.
 
-DDL 적용은 MVP에서는 Supabase SQL Editor에서 직접 실행한다. 스키마 변경이 잦아지면 Flyway 도입을 검토한다.
+DDL 적용은 MVP에서는 DB 클라이언트(psql/pgAdmin 등)에서 직접 실행한다. 스키마 변경이 잦아지면 Flyway 도입을 검토한다.
 (`spring.jpa.hibernate.ddl-auto`는 운영 DB에 쓰지 않는다.)
 
 ## 7. 미결 사항
@@ -456,3 +513,5 @@ DDL 적용은 MVP에서는 Supabase SQL Editor에서 직접 실행한다. 스키
   `meal_plan_meals`에 인덱스가 추가로 필요할 수 있다 (예: 운동명별 빈도 집계라면 `name` 인덱스).
 - **AI 응답 스키마가 이 DDL과 다르게 확정될 경우** — 정규화된 구조라 jsonb 때보다 마이그레이션
   비용이 크다. AI 서버와 `architecture.md` 4장의 `result` 스키마를 합의할 때 이 문서와 나란히 맞춰야 한다.
+- **프로덕션 DB 호스팅** — Supabase 사용 중단은 확정. 로컬은 PostgreSQL로 전환 완료했으나
+  Railway 배포 환경의 DB(호스팅처, 풀러 여부)는 아직 미결이다.

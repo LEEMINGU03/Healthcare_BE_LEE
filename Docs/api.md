@@ -10,7 +10,7 @@ API 설명은 이 문서를 가리키기만 한다. 스키마는 `database.md`/`
 |---|---|
 | Base path | `/api` (백엔드), AI 서버는 별도 base URL — 4장 참고 |
 | Content-Type | `application/json` (요청·응답 모두) |
-| 인증 | 없음 (MVP). 고정 더미 유저 1명 — [[stack-architecture]] |
+| 인증 | 구글 소셜 로그인 + JWT(Access/Refresh Token). `Authorization: Bearer <accessToken>` 헤더로 현재 유저를 식별한다 |
 | ID | UUID 문자열 |
 | 날짜 | `date`는 `yyyy-MM-dd`, 타임스탬프는 ISO-8601 offset (`2026-07-16T09:00:00+09:00`) |
 | enum 값 | Java enum과 동일한 대문자 표기 그대로 JSON에 노출 (아래 표) |
