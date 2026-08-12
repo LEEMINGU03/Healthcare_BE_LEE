@@ -60,6 +60,7 @@ public class RoutineService {
     private RoutineDto toDto(Routine routine) {
         List<RoutineExerciseDto> exercises = routine.getExercises().stream()
                 .map(exercise -> new RoutineExerciseDto(
+                        exercise.getId(),
                         exercise.getOrderNo(),
                         exercise.getName(),
                         exercise.getSets(),

@@ -22,14 +22,24 @@
 > - `routine_id`는 `on delete set null`(cascade 아님). `routines`는 `chat_messages`에
 >   cascade로 매달려 있어, 여기서도 cascade를 걸면 채팅 세션을 지울 때 운동 이력이 함께
 >   삭제되어 버린다 — 운동 이력은 그 세션/루틴이 사라져도 독립적으로 남아야 한다.
-> - `muscle_group`은 nullable로 시작 — AI 응답(`api.md` 4.2)에 부위 필드가 추가되면
->   그때 채워진다. 지금은 백엔드가 채울 방법이 없다.
+> - `muscle_group`은 nullable — `routine_exercise_id`가 있으면 그 운동의 `body_part`로부터
+>   백엔드가 계산해 채우고, 없으면(자유 입력) 클라이언트가 보낸 값을 그대로 쓴다(아래
+>   [2026-08 갱신] bodyPart 매핑 항목 참고).
 >
 > **[2026-08 갱신] AI 부위(bodyPart) 원본 보관 — `routine_exercises.body_part` 신설**
 > - AI가 운동마다 분류해 보내는 부위(`BACK`/`CHEST`/`BICEPS`/`TRICEPS`/`SHOULDER`/`CORE`/
 >   `GLUTES`/`THIGH`/`CALF`, 9개)를 매핑 없이 원본 그대로 저장한다.
-> - `workout_logs.muscle_group`(7개)과는 값 도메인이 다르다 — 그쪽으로의 매핑은 아직
->   구현하지 않았다(별도 작업, 위 미결 사항의 "채우는 주체" 참고).
+> - `workout_logs.muscle_group`(7개)과는 값 도메인이 다르다.
+>
+> **[2026-08 갱신] bodyPart → muscle_group 매핑 — `workout_logs.routine_exercise_id` 신설**
+> - `POST /api/workout-logs`(`api.md` 3.5)가 `routineExerciseId`를 받으면, 그 운동의
+>   `body_part`(9개)를 `muscle_group`(7개)으로 매핑해 채운다: `BICEPS`/`TRICEPS` → `ARM`,
+>   `GLUTES`/`THIGH`/`CALF` → `LOWER_BODY`, `BACK`/`CHEST`/`SHOULDER`/`CORE`는 그대로.
+>   `CARDIO`는 AI 쪽엔 없는 값이라 자유 입력에서만 나온다.
+> - `routine_exercise_id`도 `routine_id`와 마찬가지로 `on delete set null`. `routine_id`
+>   컬럼은 유지한다 — 루틴 제목 등 상위 정보를 조인 없이 한 번에 끌어오는 용도.
+> - `body_part`가 null이거나 매핑표에 없는 값이면 `muscle_group`도 null로 저장된다
+>   (매핑 실패로 저장 자체가 깨지지 않도록).
 
 ## 1. 전제
 
@@ -56,6 +66,7 @@ erDiagram
     meal_plan_days ||--o{ meal_plan_meals : "끼니"
     users ||--o{ workout_logs : "운동 수행 기록"
     routines |o--o{ workout_logs : "수행된 루틴(nullable, SET NULL)"
+    routine_exercises |o--o{ workout_logs : "수행된 운동(nullable, SET NULL)"
 
     users {
         uuid id PK
@@ -169,6 +180,7 @@ erDiagram
         uuid id PK
         uuid user_id FK
         uuid routine_id FK
+        uuid routine_exercise_id FK
         date performed_at
         text exercise_name
         text muscle_group
@@ -436,8 +448,8 @@ create table routine_exercises (
 
 `body_part`는 AI가 운동마다 분류해 보내는 부위(9개, `api.md` 4.2)를 매핑 없이 원본 그대로
 담는다 — nullable인 이유는 AI가 이 필드를 안 줄 가능성을 열어두기 위함이다. `workout_logs.
-muscle_group`(7개, `database.md` workout_logs 섹션)과는 다른 값 도메인이며, 9→7 매핑은
-아직 구현하지 않았다.
+muscle_group`(7개)과는 다른 값 도메인이다 — 9→7 매핑은 `POST /api/workout-logs`가
+`routineExerciseId`를 받았을 때 이 컬럼을 읽어 수행한다(위 workout_logs 섹션 매핑표 참고).
 
 ### meal_plans / meal_plan_days / meal_plan_meals
 
@@ -481,32 +493,47 @@ create table meal_plan_meals (
 
 ```sql
 create table workout_logs (
-  id             uuid primary key default gen_random_uuid(),
-  user_id        uuid not null references users(id) on delete cascade,
-  routine_id     uuid references routines(id) on delete set null,
-  performed_at   date not null,
-  exercise_name  text not null,
-  muscle_group   text check (muscle_group in
-                   ('CHEST', 'BACK', 'SHOULDER', 'ARM', 'LOWER_BODY', 'CORE', 'CARDIO')),
-  planned_sets   integer check (planned_sets > 0),
-  completed_sets integer check (completed_sets >= 0),
-  reps           integer check (reps > 0),
-  weight_kg      numeric(5,2) check (weight_kg >= 0),
-  created_at     timestamptz not null default now()
+  id                   uuid primary key default gen_random_uuid(),
+  user_id              uuid not null references users(id) on delete cascade,
+  routine_id           uuid references routines(id) on delete set null,
+  routine_exercise_id  uuid references routine_exercises(id) on delete set null,
+  performed_at         date not null,
+  exercise_name        text not null,
+  muscle_group         text check (muscle_group in
+                         ('CHEST', 'BACK', 'SHOULDER', 'ARM', 'LOWER_BODY', 'CORE', 'CARDIO')),
+  planned_sets         integer check (planned_sets > 0),
+  completed_sets       integer check (completed_sets >= 0),
+  reps                 integer check (reps > 0),
+  weight_kg            numeric(5,2) check (weight_kg >= 0),
+  created_at           timestamptz not null default now()
 );
 
 create index idx_workout_logs_user_performed
   on workout_logs (user_id, performed_at desc);
 ```
 
-- `routine_id`는 **nullable + `on delete set null`**(cascade 아님). null이면 사용자 자유 입력,
-  값이 있으면 어떤 AI 루틴을 수행했는지를 가리킨다. `routines`는 `chat_messages`에 cascade로
-  매달려 있는데, 여기서도 cascade를 걸면 채팅 세션이 삭제될 때 운동 이력까지 통째로 사라진다 —
-  운동 이력은 세션/루틴의 생명주기와 독립적으로 남아야 하므로 SET NULL을 택했다.
-- `muscle_group`은 nullable. AI 응답(`api.md` 4.2 `result.routine.exercises[]`)에 부위
-  필드가 아직 없어 지금은 백엔드가 채울 방법이 없다 — 필드가 추가되는 대로 채워진다.
-- `planned_sets`는 루틴 수행 시점의 추천 세트 수 스냅샷이다. `routine_id`가 나중에
-  SET NULL로 끊기더라도(루틴/세션 삭제) 완료율(`completed_sets` / `planned_sets`) 계산에
+- `routine_id`/`routine_exercise_id` 둘 다 **nullable + `on delete set null`**(cascade 아님).
+  `routines`/`routine_exercises`는 `chat_messages`에 cascade로 매달려 있는데, 여기서도
+  cascade를 걸면 채팅 세션이 삭제될 때 운동 이력까지 통째로 사라진다 — 운동 이력은 세션/루틴의
+  생명주기와 독립적으로 남아야 하므로 SET NULL을 택했다.
+- `routine_exercise_id`가 "어떤 운동을 수행했는지"를 특정하는 실제 값이고, `routine_id`는
+  그 운동이 속한 루틴 정보(제목 등)를 조인 한 번으로 끌어오기 위해 같이 유지한다 —
+  `routine_exercise_id`로부터 파생해서 채우지만 컬럼은 독립적으로 둔다.
+- `muscle_group`은 nullable. `routine_exercise_id`가 있으면 그 운동의
+  `routine_exercises.body_part`(9개, `api.md` 4.2)를 아래 매핑표로 7개로 변환해 채운다.
+  없으면(자유 입력) 클라이언트가 보낸 `muscleGroup`을 그대로 쓴다.
+
+  | body_part(9개) | muscle_group(7개) |
+  |---|---|
+  | `BICEPS`, `TRICEPS` | `ARM` |
+  | `GLUTES`, `THIGH`, `CALF` | `LOWER_BODY` |
+  | `BACK`, `CHEST`, `SHOULDER`, `CORE` | 그대로 |
+  | (AI엔 없음) | `CARDIO` — 자유 입력에서만 나옴 |
+
+  `body_part`가 null이거나 매핑표에 없는 값이면 `muscle_group`도 null로 저장한다 —
+  매핑 실패로 저장 요청 자체가 깨지면 안 되기 때문 (`WorkoutLogService` 참고).
+- `planned_sets`는 루틴 수행 시점의 추천 세트 수 스냅샷이다. `routine_id`/`routine_exercise_id`가
+  나중에 SET NULL로 끊기더라도(루틴/세션 삭제) 완료율(`completed_sets` / `planned_sets`) 계산에
   필요한 값이 남아있도록 별도 컬럼으로 스냅샷을 떠 둔다.
 - 인덱스는 "유저의 수행 기록을 최신순으로 조회"(`where user_id = ? order by performed_at desc`)
   패턴에 대응한다 — `inbody_records`의 `idx_inbody_user_measured`와 같은 이유.
@@ -590,6 +617,3 @@ DDL 적용은 MVP에서는 DB 클라이언트(psql/pgAdmin 등)에서 직접 실
   비용이 크다. AI 서버와 `architecture.md` 4장의 `result` 스키마를 합의할 때 이 문서와 나란히 맞춰야 한다.
 - **프로덕션 DB 호스팅** — Supabase 사용 중단은 확정. 로컬은 PostgreSQL로 전환 완료했으나
   Railway 배포 환경의 DB(호스팅처, 풀러 여부)는 아직 미결이다.
-- **`workout_logs.muscle_group` 채우는 주체** — AI 응답에 부위 필드가 추가될 때까지는
-  값이 항상 null이 된다. AI 서버와 `api.md` 4.2 계약에 부위 필드를 추가할지, 백엔드가
-  운동명으로 매핑할지 아직 정하지 않았다.
