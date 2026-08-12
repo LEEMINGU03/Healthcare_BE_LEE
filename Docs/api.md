@@ -26,6 +26,8 @@ API 설명은 이 문서를 가리키기만 한다. 스키마는 `database.md`/`
 | `previousWorkout` | `UPPER_BODY`, `LOWER_BODY` |
 | `dayOfWeek` | `MON`, `TUE`, `WED`, `THU`, `FRI`, `SAT`, `SUN` |
 | `slot` (끼니) | `BREAKFAST`, `LUNCH`, `DINNER` |
+| `muscleGroup` (운동 수행 기록) | `CHEST`, `BACK`, `SHOULDER`, `ARM`, `LOWER_BODY`, `CORE`, `CARDIO` |
+| `status` (운동 수행 기록) | `COMPLETED`, `INCOMPLETE` — DB 저장값이 아니라 조회 시점에 계산되는 값 (3.6 참고) |
 
 ### 에러 응답
 
@@ -53,6 +55,8 @@ Spring Boot 내장 **RFC 7807 ProblemDetail**을 그대로 쓴다. 커스텀 에
 | POST | `/api/chat` | 코칭/영양 채팅 (메인 입력창 + 첫 인사말 포함) |
 | GET | `/api/chat/sessions` | 최근 채팅내역 목록 |
 | GET | `/api/chat/sessions/{sessionId}` | 세션 상세 (메시지 + 결과 전체) |
+| POST | `/api/workout-logs` | 운동 수행 기록 저장 (AI 루틴 수행 또는 자유 입력) |
+| GET | `/api/workout-logs` | 운동 수행 기록 이력 전체 조회 |
 
 메인 화면 상단의 "ooo님 반갑습니다 / 지난 루틴을 기반하여 오늘은 상체 하시는 날입니다"는 별도
 프로필 조회 API가 없다. **이것도 채팅의 일부** — 새 세션의 첫 AI 메시지이며 `POST /api/chat`으로
@@ -218,6 +222,73 @@ Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
 ```
 
 **응답 `404 Not Found`** — `sessionId`가 존재하지 않음.
+
+### 3.5 `POST /api/workout-logs`
+
+운동 수행 기록 저장. AI 루틴을 수행한 기록(`routineId` 있음)과 사용자 자유 입력
+(`routineId` 없음) 둘 다 이 엔드포인트 하나로 받는다.
+
+**요청**
+```json
+{
+  "performedAt": "2026-08-12",
+  "exerciseName": "벤치프레스",
+  "muscleGroup": "CHEST",
+  "plannedSets": 4,
+  "completedSets": 3,
+  "reps": 10,
+  "weightKg": 60.0,
+  "routineId": "3f2a1c34-..."
+}
+```
+
+| 필드 | 제약 |
+|---|---|
+| `performedAt` | 필수 |
+| `exerciseName` | 필수 |
+| `muscleGroup` | 선택. `CHEST`\|`BACK`\|`SHOULDER`\|`ARM`\|`LOWER_BODY`\|`CORE`\|`CARDIO` |
+| `plannedSets` | 선택, 양수 |
+| `completedSets` | 선택, 0 이상 |
+| `reps` | 선택, 양수 |
+| `weightKg` | 선택, 0 이상 |
+| `routineId` | 선택. 있으면 AI 루틴 수행 기록으로 연결, 없으면 자유 입력 |
+
+**응답 `201 Created`** — 3.6의 배열 원소와 동일한 모양 하나.
+
+**에러**
+
+| 상태 | 조건 |
+|---|---|
+| `400` | 필수 필드 누락/제약 위반, `routineId`가 다른 유저의 루틴을 가리킴 |
+| `404` | `routineId`가 존재하지 않는 루틴을 가리킴 |
+
+### 3.6 `GET /api/workout-logs`
+
+로그인 유저의 운동 수행 기록 이력 전체 조회. 페이지네이션 없음. `performedAt` 내림차순.
+
+**응답 `200 OK`**
+```json
+[
+  {
+    "id": "9c1e2b7a-...",
+    "routineId": "3f2a1c34-...",
+    "performedAt": "2026-08-12",
+    "exerciseName": "벤치프레스",
+    "muscleGroup": "CHEST",
+    "plannedSets": 4,
+    "completedSets": 3,
+    "reps": 10,
+    "weightKg": 60.0,
+    "completionRate": 0.75,
+    "status": "INCOMPLETE"
+  }
+]
+```
+
+`completionRate`/`status`는 DB에 저장된 값이 아니라 `completedSets / plannedSets`로 조회
+시점에 계산된다 — 완료 기준(현재 80%)이 바뀌어도 과거 기록을 재계산할 필요가 없다.
+`plannedSets`가 없거나 0이면(자유 입력) `completionRate`는 `1`, `status`는 `COMPLETED`로
+고정한다. 기록이 없으면 빈 배열.
 
 ## 4. 백엔드 → AI 서버
 

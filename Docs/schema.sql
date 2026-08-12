@@ -13,6 +13,9 @@
 -- [2026-07 갱신] 구글 소셜 로그인 도입:
 --  * 신설: user_social_accounts (유저 1명이 여러 provider를 연결할 수 있는 구조. 카카오 등 추후 추가 예정)
 --  * 신설: refresh_tokens (JWT access token 재발급용. DB에 저장해 즉시 무효화 가능하게 함)
+--
+-- [2026-08 갱신] 운동 수행 기록:
+--  * 신설: workout_logs (AI 루틴 수행 + 사용자 자유 입력을 한 테이블에 담음, routine_id는 SET NULL)
 
 create table users
 (
@@ -177,6 +180,29 @@ create table routine_exercises
     image_url   text,
     unique (routine_id, order_no)
 );
+
+-- 운동 수행 기록. AI 루틴 수행(routine_id 有)과 사용자 자유 입력(routine_id 無) 둘 다 담는다.
+-- routine_id는 SET NULL(cascade 아님) — routines는 chat_messages에 cascade로 매달려 있어,
+-- cascade로 걸면 채팅 세션 삭제 시 운동 이력이 통째로 날아간다.
+create table workout_logs
+(
+    id             uuid primary key       default gen_random_uuid(),
+    user_id        uuid          not null references users (id) on delete cascade,
+    routine_id     uuid          references routines (id) on delete set null,
+    performed_at   date          not null,
+    exercise_name  text          not null,
+    -- 부위. AI 응답에 해당 필드가 추가되면 채워짐 — 그 전까지는 nullable.
+    muscle_group   text          check (muscle_group in
+                                   ('CHEST', 'BACK', 'SHOULDER', 'ARM', 'LOWER_BODY', 'CORE', 'CARDIO')),
+    planned_sets   integer       check (planned_sets > 0),   -- 추천 세트 수 스냅샷(완료율 계산용)
+    completed_sets integer       check (completed_sets >= 0),
+    reps           integer       check (reps > 0),
+    weight_kg      numeric(5, 2) check (weight_kg >= 0),
+    created_at     timestamptz   not null default now()
+);
+
+create index idx_workout_logs_user_performed
+    on workout_logs (user_id, performed_at desc);
 
 create table meal_plans
 (
