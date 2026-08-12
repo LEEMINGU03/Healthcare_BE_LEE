@@ -14,7 +14,7 @@
 --  * 신설: user_social_accounts (유저 1명이 여러 provider를 연결할 수 있는 구조. 카카오 등 추후 추가 예정)
 --  * 신설: refresh_tokens (JWT access token 재발급용. DB에 저장해 즉시 무효화 가능하게 함)
 --
--- [2026-08 갱신] 운동 수행 기록 1단계 (스키마/엔티티만, API는 아직 없음):
+-- [2026-08 갱신] 운동 수행 기록:
 --  * 신설: workout_logs (AI 루틴 수행 + 사용자 자유 입력을 한 테이블에 담음, routine_id는 SET NULL)
 
 create table users

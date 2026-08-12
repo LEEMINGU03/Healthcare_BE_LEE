@@ -16,7 +16,7 @@
 >   Refresh Token은 발급한 토큰 문자열을 DB에도 그대로 저장해 로그아웃 시 그 행만 지우면
 >   즉시 무효화할 수 있게 한다(서명 검증 + DB 존재 확인 하이브리드).
 >
-> **[2026-08 갱신] 운동 수행 기록 1단계 — `workout_logs` 신설 (스키마/엔티티만, API는 아직 없음)**
+> **[2026-08 갱신] 운동 수행 기록 — `workout_logs` 신설 (`POST`/`GET /api/workout-logs`, `api.md` 3.5~3.6)**
 > - AI 추천 루틴 수행 기록과 사용자 자유 입력 기록을 한 테이블에 담는다. `routine_id`는
 >   nullable — null이면 자유 입력, 값이 있으면 어떤 AI 루틴을 수행했는지를 가리킨다.
 > - `routine_id`는 `on delete set null`(cascade 아님). `routines`는 `chat_messages`에
@@ -460,7 +460,7 @@ create table meal_plan_meals (
 ### workout_logs
 
 사용자의 운동 수행 기록. AI 추천 루틴을 수행한 기록과 사용자가 직접 입력한 자유 기록을
-한 테이블에 담는다 — 대시보드 "운동 수행 기록" 기능 1단계(현재는 스키마/엔티티만, API는 아직 없음).
+한 테이블에 담는다 — 대시보드 "운동 수행 기록" 기능. API는 `api.md` 3.5(`POST`)/3.6(`GET`) 참고.
 
 ```sql
 create table workout_logs (
@@ -575,8 +575,6 @@ DDL 적용은 MVP에서는 DB 클라이언트(psql/pgAdmin 등)에서 직접 실
   비용이 크다. AI 서버와 `architecture.md` 4장의 `result` 스키마를 합의할 때 이 문서와 나란히 맞춰야 한다.
 - **프로덕션 DB 호스팅** — Supabase 사용 중단은 확정. 로컬은 PostgreSQL로 전환 완료했으나
   Railway 배포 환경의 DB(호스팅처, 풀러 여부)는 아직 미결이다.
-- **`workout_logs` API** — 테이블/엔티티/Repository만 생겼고 POST/GET 엔드포인트는 아직
-  없다. 목록 조회 범위(전체 vs 기간 필터 vs 페이지네이션)와 요청/응답 DTO는 2단계에서 정한다.
 - **`workout_logs.muscle_group` 채우는 주체** — AI 응답에 부위 필드가 추가될 때까지는
   값이 항상 null이 된다. AI 서버와 `api.md` 4.2 계약에 부위 필드를 추가할지, 백엔드가
   운동명으로 매핑할지 아직 정하지 않았다.
