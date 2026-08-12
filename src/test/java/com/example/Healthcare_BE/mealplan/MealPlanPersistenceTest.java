@@ -40,7 +40,7 @@ class MealPlanPersistenceTest {
     @Test
     void 식단표와_요일별_끼니가_함께_저장되고_조회된다() {
         User user = userRepository.save(
-                new User("테스트유저", Gender.FEMALE, BigDecimal.valueOf(160.0), null, null));
+                new User("테스트유저", Gender.FEMALE, BigDecimal.valueOf(160.0), null));
         ChatSession session = chatSessionRepository.save(
                 new ChatSession(user, ChatType.NUTRITION, "테스트 세션"));
         ChatMessage message = chatMessageRepository.save(

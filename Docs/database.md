@@ -15,6 +15,31 @@
 > - 신설: `refresh_tokens` — 세션이 아닌 JWT(Access/Refresh Token) 방식 채택. 둘 다 JWT이며,
 >   Refresh Token은 발급한 토큰 문자열을 DB에도 그대로 저장해 로그아웃 시 그 행만 지우면
 >   즉시 무효화할 수 있게 한다(서명 검증 + DB 존재 확인 하이브리드).
+>
+> **[2026-08 갱신] 운동 수행 기록 — `workout_logs` 신설 (`POST`/`GET /api/workout-logs`, `api.md` 3.5~3.6)**
+> - AI 추천 루틴 수행 기록과 사용자 자유 입력 기록을 한 테이블에 담는다. `routine_id`는
+>   nullable — null이면 자유 입력, 값이 있으면 어떤 AI 루틴을 수행했는지를 가리킨다.
+> - `routine_id`는 `on delete set null`(cascade 아님). `routines`는 `chat_messages`에
+>   cascade로 매달려 있어, 여기서도 cascade를 걸면 채팅 세션을 지울 때 운동 이력이 함께
+>   삭제되어 버린다 — 운동 이력은 그 세션/루틴이 사라져도 독립적으로 남아야 한다.
+> - `muscle_group`은 nullable — `routine_exercise_id`가 있으면 그 운동의 `body_part`로부터
+>   백엔드가 계산해 채우고, 없으면(자유 입력) 클라이언트가 보낸 값을 그대로 쓴다(아래
+>   [2026-08 갱신] bodyPart 매핑 항목 참고).
+>
+> **[2026-08 갱신] AI 부위(bodyPart) 원본 보관 — `routine_exercises.body_part` 신설**
+> - AI가 운동마다 분류해 보내는 부위(`BACK`/`CHEST`/`BICEPS`/`TRICEPS`/`SHOULDER`/`CORE`/
+>   `GLUTES`/`THIGH`/`CALF`, 9개)를 매핑 없이 원본 그대로 저장한다.
+> - `workout_logs.muscle_group`(7개)과는 값 도메인이 다르다.
+>
+> **[2026-08 갱신] bodyPart → muscle_group 매핑 — `workout_logs.routine_exercise_id` 신설**
+> - `POST /api/workout-logs`(`api.md` 3.5)가 `routineExerciseId`를 받으면, 그 운동의
+>   `body_part`(9개)를 `muscle_group`(7개)으로 매핑해 채운다: `BICEPS`/`TRICEPS` → `ARM`,
+>   `GLUTES`/`THIGH`/`CALF` → `LOWER_BODY`, `BACK`/`CHEST`/`SHOULDER`/`CORE`는 그대로.
+>   `CARDIO`는 AI 쪽엔 없는 값이라 자유 입력에서만 나온다.
+> - `routine_exercise_id`도 `routine_id`와 마찬가지로 `on delete set null`. `routine_id`
+>   컬럼은 유지한다 — 루틴 제목 등 상위 정보를 조인 없이 한 번에 끌어오는 용도.
+> - `body_part`가 null이거나 매핑표에 없는 값이면 `muscle_group`도 null로 저장된다
+>   (매핑 실패로 저장 자체가 깨지지 않도록).
 
 ## 1. 전제
 
@@ -39,6 +64,9 @@ erDiagram
     chat_messages ||--o| meal_plans : "영양 결과"
     meal_plans ||--o{ meal_plan_days : "요일"
     meal_plan_days ||--o{ meal_plan_meals : "끼니"
+    users ||--o{ workout_logs : "운동 수행 기록"
+    routines |o--o{ workout_logs : "수행된 루틴(nullable, SET NULL)"
+    routine_exercises |o--o{ workout_logs : "수행된 운동(nullable, SET NULL)"
 
     users {
         uuid id PK
@@ -126,6 +154,7 @@ erDiagram
         text reps
         text description
         text image_url
+        text body_part
     }
     meal_plans {
         uuid id PK
@@ -146,6 +175,19 @@ erDiagram
         numeric carbs_g
         numeric protein_g
         numeric fat_g
+    }
+    workout_logs {
+        uuid id PK
+        uuid user_id FK
+        uuid routine_id FK
+        uuid routine_exercise_id FK
+        date performed_at
+        text exercise_name
+        text muscle_group
+        int planned_sets
+        int completed_sets
+        int reps
+        numeric weight_kg
     }
 ```
 
@@ -262,6 +304,9 @@ create index idx_inbody_user_measured
 - 인덱스는 `GET /api/inbody/recent`의 "유저의 최신 1건" 조회 패턴에 대응한다 (`where user_id = ? order by measured_at desc limit 1`).
 - 체중은 이 테이블에만 둔다 — 회원가입 시 입력한 키·체중도 인바디 측정값의 일부로 여기에 저장하며, users에 중복 보관하지 않는다.
 - 화면 항목은 골격근량·체지방량·체지방률·기초대사량 4종이다 (BMI·내장지방·허리둘레는 미포함).
+- 인바디 입력은 사용자 직접 입력으로 확정, 회원가입2에서 측정값을 입력받는다(`POST /api/inbody`, `api.md` 3.1c).
+  "인바디 없이 시작" 옵션은 제거되어 인바디는 항상 입력된다 — 그래서 `weight_kg`/`bmr_kcal`/
+  `skeletal_muscle_mass_kg`/`body_fat_mass_kg`가 다른 프로필 컬럼과 달리 not null이다.
 
 ### user_preferences
 
@@ -391,6 +436,8 @@ create table routine_exercises (
   reps         text not null,                           -- "8~12회"
   description  text,
   image_url    text,
+  body_part    text check (body_part in
+                 ('BACK', 'CHEST', 'BICEPS', 'TRICEPS', 'SHOULDER', 'CORE', 'GLUTES', 'THIGH', 'CALF')),
   unique (routine_id, order_no)
 );
 ```
@@ -398,6 +445,11 @@ create table routine_exercises (
 `chat_message_id`에 `unique`를 걸어 메시지 1건당 루틴을 최대 1개로 제한한다.
 `sets`/`reps`는 "3~4세트"처럼 범위 표기라 숫자로 쪼개지 않고 텍스트 그대로 저장한다 —
 집계가 필요해지면(예: 세트 수 평균) 그때 최소/최대 숫자 컬럼으로 분리한다.
+
+`body_part`는 AI가 운동마다 분류해 보내는 부위(9개, `api.md` 4.2)를 매핑 없이 원본 그대로
+담는다 — nullable인 이유는 AI가 이 필드를 안 줄 가능성을 열어두기 위함이다. `workout_logs.
+muscle_group`(7개)과는 다른 값 도메인이다 — 9→7 매핑은 `POST /api/workout-logs`가
+`routineExerciseId`를 받았을 때 이 컬럼을 읽어 수행한다(위 workout_logs 섹션 매핑표 참고).
 
 ### meal_plans / meal_plan_days / meal_plan_meals
 
@@ -433,6 +485,58 @@ create table meal_plan_meals (
 
 `unique (meal_plan_id, day_of_week)`와 `unique (day_id, slot)`이 각각 "하루는 요일당 1행",
 "한 끼는 슬롯당 1행"을 강제한다 — 같은 날 아침이 중복 저장되는 경우가 구조적으로 불가능하다.
+
+### workout_logs
+
+사용자의 운동 수행 기록. AI 추천 루틴을 수행한 기록과 사용자가 직접 입력한 자유 기록을
+한 테이블에 담는다 — 대시보드 "운동 수행 기록" 기능. API는 `api.md` 3.5(`POST`)/3.6(`GET`) 참고.
+
+```sql
+create table workout_logs (
+  id                   uuid primary key default gen_random_uuid(),
+  user_id              uuid not null references users(id) on delete cascade,
+  routine_id           uuid references routines(id) on delete set null,
+  routine_exercise_id  uuid references routine_exercises(id) on delete set null,
+  performed_at         date not null,
+  exercise_name        text not null,
+  muscle_group         text check (muscle_group in
+                         ('CHEST', 'BACK', 'SHOULDER', 'ARM', 'LOWER_BODY', 'CORE', 'CARDIO')),
+  planned_sets         integer check (planned_sets > 0),
+  completed_sets       integer check (completed_sets >= 0),
+  reps                 integer check (reps > 0),
+  weight_kg            numeric(5,2) check (weight_kg >= 0),
+  created_at           timestamptz not null default now()
+);
+
+create index idx_workout_logs_user_performed
+  on workout_logs (user_id, performed_at desc);
+```
+
+- `routine_id`/`routine_exercise_id` 둘 다 **nullable + `on delete set null`**(cascade 아님).
+  `routines`/`routine_exercises`는 `chat_messages`에 cascade로 매달려 있는데, 여기서도
+  cascade를 걸면 채팅 세션이 삭제될 때 운동 이력까지 통째로 사라진다 — 운동 이력은 세션/루틴의
+  생명주기와 독립적으로 남아야 하므로 SET NULL을 택했다.
+- `routine_exercise_id`가 "어떤 운동을 수행했는지"를 특정하는 실제 값이고, `routine_id`는
+  그 운동이 속한 루틴 정보(제목 등)를 조인 한 번으로 끌어오기 위해 같이 유지한다 —
+  `routine_exercise_id`로부터 파생해서 채우지만 컬럼은 독립적으로 둔다.
+- `muscle_group`은 nullable. `routine_exercise_id`가 있으면 그 운동의
+  `routine_exercises.body_part`(9개, `api.md` 4.2)를 아래 매핑표로 7개로 변환해 채운다.
+  없으면(자유 입력) 클라이언트가 보낸 `muscleGroup`을 그대로 쓴다.
+
+  | body_part(9개) | muscle_group(7개) |
+  |---|---|
+  | `BICEPS`, `TRICEPS` | `ARM` |
+  | `GLUTES`, `THIGH`, `CALF` | `LOWER_BODY` |
+  | `BACK`, `CHEST`, `SHOULDER`, `CORE` | 그대로 |
+  | (AI엔 없음) | `CARDIO` — 자유 입력에서만 나옴 |
+
+  `body_part`가 null이거나 매핑표에 없는 값이면 `muscle_group`도 null로 저장한다 —
+  매핑 실패로 저장 요청 자체가 깨지면 안 되기 때문 (`WorkoutLogService` 참고).
+- `planned_sets`는 루틴 수행 시점의 추천 세트 수 스냅샷이다. `routine_id`/`routine_exercise_id`가
+  나중에 SET NULL로 끊기더라도(루틴/세션 삭제) 완료율(`completed_sets` / `planned_sets`) 계산에
+  필요한 값이 남아있도록 별도 컬럼으로 스냅샷을 떠 둔다.
+- 인덱스는 "유저의 수행 기록을 최신순으로 조회"(`where user_id = ? order by performed_at desc`)
+  패턴에 대응한다 — `inbody_records`의 `idx_inbody_user_measured`와 같은 이유.
 
 ## 4. 시드 (더미 유저) — 폐기됨
 
@@ -502,8 +606,6 @@ DDL 적용은 MVP에서는 DB 클라이언트(psql/pgAdmin 등)에서 직접 실
 
 ## 7. 미결 사항
 
-- **인바디 입력 경로** — 사용자 직접 입력으로 확정(회원가입2에서 측정값 입력). `POST /api/inbody` 신설 예정.
-  "인바디 없이 시작" 옵션은 제거되어 인바디는 항상 입력된다(관련 컬럼 not null 유지).
 - **`unique (user_id, measured_at)`** — 하루 1회 측정을 가정했다. 하루 여러 번 측정을 허용해야 하면
   이 제약을 빼고 `measured_at`을 `timestamptz`로 바꾼다.
 - **`chat_sessions.title` 생성 규칙 미정** — 첫 사용자 메시지를 잘라 쓰는 방식을 가정하고 nullable로 뒀다.

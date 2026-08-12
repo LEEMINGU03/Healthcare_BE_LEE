@@ -13,7 +13,6 @@ public record UserProfileDto(
         String name,
         Gender gender,
         BigDecimal heightCm,
-        BigDecimal targetGainKg,
         WorkoutType previousWorkout
 ) {
 }

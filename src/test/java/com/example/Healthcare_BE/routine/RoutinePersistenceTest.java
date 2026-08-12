@@ -42,7 +42,7 @@ class RoutinePersistenceTest {
     @Test
     void 루틴과_운동_항목이_함께_저장되고_조회된다() {
         User user = userRepository.save(
-                new User("테스트유저", Gender.MALE, BigDecimal.valueOf(175.0), BigDecimal.valueOf(3.0), null));
+                new User("테스트유저", Gender.MALE, BigDecimal.valueOf(175.0), null));
         ChatSession session = chatSessionRepository.save(
                 new ChatSession(user, ChatType.COACHING, "테스트 세션"));
         ChatMessage message = chatMessageRepository.save(
@@ -50,9 +50,9 @@ class RoutinePersistenceTest {
 
         Routine routine = new Routine(message, "COACHING AI 운동루틴");
         routine.addExercise(new RoutineExercise(1, "등업", "3~4세트", "8~12회",
-                "어깨너비보다 약간 넓게 바를 잡는다.", null));
+                "어깨너비보다 약간 넓게 바를 잡는다.", null, "BACK"));
         routine.addExercise(new RoutineExercise(2, "벤치프레스", "3~4세트", "8~12회",
-                "가슴 중앙까지 바를 내린다.", null));
+                "가슴 중앙까지 바를 내린다.", null, "CHEST"));
         routineRepository.save(routine);
 
         Optional<Routine> found = routineRepository.findByChatMessageId(message.getId());
