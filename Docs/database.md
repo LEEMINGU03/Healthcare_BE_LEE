@@ -24,6 +24,12 @@
 >   삭제되어 버린다 — 운동 이력은 그 세션/루틴이 사라져도 독립적으로 남아야 한다.
 > - `muscle_group`은 nullable로 시작 — AI 응답(`api.md` 4.2)에 부위 필드가 추가되면
 >   그때 채워진다. 지금은 백엔드가 채울 방법이 없다.
+>
+> **[2026-08 갱신] AI 부위(bodyPart) 원본 보관 — `routine_exercises.body_part` 신설**
+> - AI가 운동마다 분류해 보내는 부위(`BACK`/`CHEST`/`BICEPS`/`TRICEPS`/`SHOULDER`/`CORE`/
+>   `GLUTES`/`THIGH`/`CALF`, 9개)를 매핑 없이 원본 그대로 저장한다.
+> - `workout_logs.muscle_group`(7개)과는 값 도메인이 다르다 — 그쪽으로의 매핑은 아직
+>   구현하지 않았다(별도 작업, 위 미결 사항의 "채우는 주체" 참고).
 
 ## 1. 전제
 
@@ -137,6 +143,7 @@ erDiagram
         text reps
         text description
         text image_url
+        text body_part
     }
     meal_plans {
         uuid id PK
@@ -417,6 +424,8 @@ create table routine_exercises (
   reps         text not null,                           -- "8~12회"
   description  text,
   image_url    text,
+  body_part    text check (body_part in
+                 ('BACK', 'CHEST', 'BICEPS', 'TRICEPS', 'SHOULDER', 'CORE', 'GLUTES', 'THIGH', 'CALF')),
   unique (routine_id, order_no)
 );
 ```
@@ -424,6 +433,11 @@ create table routine_exercises (
 `chat_message_id`에 `unique`를 걸어 메시지 1건당 루틴을 최대 1개로 제한한다.
 `sets`/`reps`는 "3~4세트"처럼 범위 표기라 숫자로 쪼개지 않고 텍스트 그대로 저장한다 —
 집계가 필요해지면(예: 세트 수 평균) 그때 최소/최대 숫자 컬럼으로 분리한다.
+
+`body_part`는 AI가 운동마다 분류해 보내는 부위(9개, `api.md` 4.2)를 매핑 없이 원본 그대로
+담는다 — nullable인 이유는 AI가 이 필드를 안 줄 가능성을 열어두기 위함이다. `workout_logs.
+muscle_group`(7개, `database.md` workout_logs 섹션)과는 다른 값 도메인이며, 9→7 매핑은
+아직 구현하지 않았다.
 
 ### meal_plans / meal_plan_days / meal_plan_meals
 

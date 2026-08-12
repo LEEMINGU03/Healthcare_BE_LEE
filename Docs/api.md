@@ -28,6 +28,7 @@ API 설명은 이 문서를 가리키기만 한다. 스키마는 `database.md`/`
 | `slot` (끼니) | `BREAKFAST`, `LUNCH`, `DINNER` |
 | `muscleGroup` (운동 수행 기록) | `CHEST`, `BACK`, `SHOULDER`, `ARM`, `LOWER_BODY`, `CORE`, `CARDIO` |
 | `status` (운동 수행 기록) | `COMPLETED`, `INCOMPLETE` — DB 저장값이 아니라 조회 시점에 계산되는 값 (3.6 참고) |
+| `bodyPart` (루틴 운동, AI 원본) | `BACK`, `CHEST`, `BICEPS`, `TRICEPS`, `SHOULDER`, `CORE`, `GLUTES`, `THIGH`, `CALF` — Java 쪽은 enum이 아닌 String(4.2 참고). `muscleGroup`(7개)과 다른 값 도메인이며 매핑하지 않는다 |
 
 ### 에러 응답
 
@@ -252,10 +253,25 @@ Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
   "type": "COACHING",
   "messages": [
     { "role": "USER", "content": "오늘 가슴 위주로 하고 싶어", "result": null },
-    { "role": "ASSISTANT", "content": "말씀하신대로...", "result": { "routine": { "...": "4장 참고" } } }
+    {
+      "role": "ASSISTANT",
+      "content": "말씀하신대로...",
+      "result": {
+        "routine": {
+          "title": "COACHING AI 운동루틴",
+          "exercises": [
+            { "order": 1, "name": "벤치프레스", "sets": "3~4세트", "reps": "8~12회",
+              "description": "...", "imageUrl": "https://...", "bodyPart": "CHEST" }
+          ]
+        }
+      }
+    }
   ]
 }
 ```
+
+`result.routine.exercises[].bodyPart`는 4.2와 동일한 필드다 — 저장된 `routine_exercises.body_part`를
+그대로 재조립해 실어준다.
 
 **응답 `404 Not Found`** — `sessionId`가 존재하지 않음.
 
@@ -383,12 +399,18 @@ AI는 `profile`/`inbody`만으로 이름을 부르는 인사말과 오늘의 추
         "sets": "3~4세트",
         "reps": "8~12회",
         "description": "어깨너비의 약간 넓게 바를 잡고 ...",
-        "imageUrl": "https://..."
+        "imageUrl": "https://...",
+        "bodyPart": "BACK"
       }
     ]
   }
 }
 ```
+
+`bodyPart`는 선택 필드다. AI가 분류한 부위 원본(9개 — 위 "enum 값 목록"의 `bodyPart` 행 참고)을
+매핑 없이 그대로 저장·재노출한다. AI가 이 필드를 보내지 않거나 9개 밖의 값을 보내면 `null`로
+저장된다(요청 전체를 실패시키지 않는다) — 백엔드는 Bean Validation이 아니라 화이트리스트
+체크로 걸러낸다.
 
 ### 4.3 `result` 스키마 — `type: NUTRITION`
 

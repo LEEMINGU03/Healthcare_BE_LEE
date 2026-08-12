@@ -50,9 +50,9 @@ class RoutinePersistenceTest {
 
         Routine routine = new Routine(message, "COACHING AI 운동루틴");
         routine.addExercise(new RoutineExercise(1, "등업", "3~4세트", "8~12회",
-                "어깨너비보다 약간 넓게 바를 잡는다.", null));
+                "어깨너비보다 약간 넓게 바를 잡는다.", null, "BACK"));
         routine.addExercise(new RoutineExercise(2, "벤치프레스", "3~4세트", "8~12회",
-                "가슴 중앙까지 바를 내린다.", null));
+                "가슴 중앙까지 바를 내린다.", null, "CHEST"));
         routineRepository.save(routine);
 
         Optional<Routine> found = routineRepository.findByChatMessageId(message.getId());

@@ -16,6 +16,10 @@
 --
 -- [2026-08 갱신] 운동 수행 기록:
 --  * 신설: workout_logs (AI 루틴 수행 + 사용자 자유 입력을 한 테이블에 담음, routine_id는 SET NULL)
+--
+-- [2026-08 갱신] AI 부위(bodyPart) 원본 보관:
+--  * routine_exercises: body_part 추가. AI가 주는 9개 값 그대로 저장(nullable, CHECK).
+--    workout_logs.muscle_group(7개)과는 다른 값 도메인 — 여기는 매핑 없이 원본 그대로.
 
 create table users
 (
@@ -178,6 +182,10 @@ create table routine_exercises
     reps        text    not null,
     description text,
     image_url   text,
+    -- AI가 분류한 부위 원본(9개). AI가 안 줄 수 있어 nullable — workout_logs.muscle_group(7개)으로
+    -- 매핑하지 않고 그대로 보관한다(나중 분석용).
+    body_part   text check (body_part in
+                 ('BACK', 'CHEST', 'BICEPS', 'TRICEPS', 'SHOULDER', 'CORE', 'GLUTES', 'THIGH', 'CALF')),
     unique (routine_id, order_no)
 );
 
