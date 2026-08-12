@@ -14,8 +14,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
- * api.md 3.1, signup_profile_api_spec.md 2-4.
+ * api.md 3.1, 3.1b, signup_profile_api_spec.md 2-4.
  */
 @RestController
 @RequestMapping("/api/inbody")
@@ -28,6 +30,11 @@ public class InbodyController {
     @GetMapping("/recent")
     public InbodyRecentResponse getRecent() {
         return inbodyService.getRecent(userService.getCurrentUser().getId());
+    }
+
+    @GetMapping
+    public List<InbodyRecentResponse> getHistory() {
+        return inbodyService.getHistory(userService.getCurrentUser().getId());
     }
 
     @PostMapping

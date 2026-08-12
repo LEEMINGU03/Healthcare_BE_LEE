@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -37,6 +38,13 @@ public class InbodyService {
                 request.skeletalMuscleMassKg(), request.bodyFatMassKg(), request.bodyFatPct());
         inbodyRecordRepository.save(record);
         return toDto(record);
+    }
+
+    /** GET /api/inbody 용 — 측정 이력 전체, 최신순 (api.md 3.1b). 기록이 없으면 빈 배열. */
+    public List<InbodyRecentResponse> getHistory(UUID userId) {
+        return inbodyRecordRepository.findByUserIdOrderByMeasuredAtDesc(userId).stream()
+                .map(this::toDto)
+                .toList();
     }
 
     /** AI 요청 조립용 — 기록이 없으면 null을 그대로 보낸다 (api.md 4.1). */
