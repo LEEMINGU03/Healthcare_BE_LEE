@@ -13,6 +13,7 @@ import java.util.UUID;
 public record WorkoutLogResponse(
         UUID id,
         UUID routineId,
+        UUID routineExerciseId,
         LocalDate performedAt,
         String exerciseName,
         MuscleGroup muscleGroup,

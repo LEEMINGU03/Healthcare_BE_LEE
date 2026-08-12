@@ -1,6 +1,7 @@
 package com.example.Healthcare_BE.workout.entity;
 
 import com.example.Healthcare_BE.routine.entity.Routine;
+import com.example.Healthcare_BE.routine.entity.RoutineExercise;
 import com.example.Healthcare_BE.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -48,6 +49,14 @@ public class WorkoutLog {
     @JoinColumn(name = "routine_id")
     private Routine routine;
 
+    /**
+     * 어떤 운동을 수행했는지 특정하는 값. DB는 routine_id와 마찬가지로 ON DELETE SET NULL —
+     * 루틴/세션이 지워져도 이 운동 이력은 남아야 한다 (database.md 참고).
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "routine_exercise_id")
+    private RoutineExercise routineExercise;
+
     @Column(name = "performed_at", nullable = false)
     private LocalDate performedAt;
 
@@ -73,11 +82,12 @@ public class WorkoutLog {
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt = OffsetDateTime.now();
 
-    public WorkoutLog(User user, Routine routine, LocalDate performedAt, String exerciseName,
-                       MuscleGroup muscleGroup, Integer plannedSets, Integer completedSets,
+    public WorkoutLog(User user, Routine routine, RoutineExercise routineExercise, LocalDate performedAt,
+                       String exerciseName, MuscleGroup muscleGroup, Integer plannedSets, Integer completedSets,
                        Integer reps, BigDecimal weightKg) {
         this.user = user;
         this.routine = routine;
+        this.routineExercise = routineExercise;
         this.performedAt = performedAt;
         this.exerciseName = exerciseName;
         this.muscleGroup = muscleGroup;

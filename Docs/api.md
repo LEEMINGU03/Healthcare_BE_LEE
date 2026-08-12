@@ -28,6 +28,7 @@ API 설명은 이 문서를 가리키기만 한다. 스키마는 `database.md`/`
 | `slot` (끼니) | `BREAKFAST`, `LUNCH`, `DINNER` |
 | `muscleGroup` (운동 수행 기록) | `CHEST`, `BACK`, `SHOULDER`, `ARM`, `LOWER_BODY`, `CORE`, `CARDIO` |
 | `status` (운동 수행 기록) | `COMPLETED`, `INCOMPLETE` — DB 저장값이 아니라 조회 시점에 계산되는 값 (3.6 참고) |
+| `bodyPart` (루틴 운동, AI 원본) | `BACK`, `CHEST`, `BICEPS`, `TRICEPS`, `SHOULDER`, `CORE`, `GLUTES`, `THIGH`, `CALF` — Java 쪽은 enum이 아닌 String(4.2 참고). `muscleGroup`(7개)과 다른 값 도메인이며 매핑하지 않는다 |
 
 ### 에러 응답
 
@@ -252,29 +253,56 @@ Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
   "type": "COACHING",
   "messages": [
     { "role": "USER", "content": "오늘 가슴 위주로 하고 싶어", "result": null },
-    { "role": "ASSISTANT", "content": "말씀하신대로...", "result": { "routine": { "...": "4장 참고" } } }
+    {
+      "role": "ASSISTANT",
+      "content": "말씀하신대로...",
+      "result": {
+        "routine": {
+          "title": "COACHING AI 운동루틴",
+          "exercises": [
+            { "id": "5a1e2b7a-...", "order": 1, "name": "벤치프레스", "sets": "3~4세트", "reps": "8~12회",
+              "description": "...", "imageUrl": "https://...", "bodyPart": "CHEST" }
+          ]
+        }
+      }
+    }
   ]
 }
 ```
+
+`result.routine.exercises[].bodyPart`는 4.2와 동일한 필드다 — 저장된 `routine_exercises.body_part`를
+그대로 재조립해 실어준다.
 
 **응답 `404 Not Found`** — `sessionId`가 존재하지 않음.
 
 ### 3.5 `POST /api/workout-logs`
 
-운동 수행 기록 저장. AI 루틴을 수행한 기록(`routineId` 있음)과 사용자 자유 입력
-(`routineId` 없음) 둘 다 이 엔드포인트 하나로 받는다.
+운동 수행 기록 저장. AI 루틴의 특정 운동을 수행한 기록(`routineExerciseId` 있음)과 사용자
+자유 입력(`routineExerciseId` 없음) 둘 다 이 엔드포인트 하나로 받는다. `routineExerciseId`는
+3.4/4.2 응답의 `result.routine.exercises[].id`를 그대로 돌려보내면 된다.
 
-**요청**
+**요청 (AI 루틴 운동 수행)**
 ```json
 {
   "performedAt": "2026-08-12",
   "exerciseName": "벤치프레스",
-  "muscleGroup": "CHEST",
   "plannedSets": 4,
   "completedSets": 3,
   "reps": 10,
   "weightKg": 60.0,
-  "routineId": "3f2a1c34-..."
+  "routineExerciseId": "5a1e2b7a-..."
+}
+```
+
+**요청 (자유 입력)**
+```json
+{
+  "performedAt": "2026-08-12",
+  "exerciseName": "런지",
+  "muscleGroup": "LOWER_BODY",
+  "completedSets": 3,
+  "reps": 12,
+  "weightKg": null
 }
 ```
 
@@ -282,12 +310,26 @@ Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
 |---|---|
 | `performedAt` | 필수 |
 | `exerciseName` | 필수 |
-| `muscleGroup` | 선택. `CHEST`\|`BACK`\|`SHOULDER`\|`ARM`\|`LOWER_BODY`\|`CORE`\|`CARDIO` |
+| `muscleGroup` | 선택. `CHEST`\|`BACK`\|`SHOULDER`\|`ARM`\|`LOWER_BODY`\|`CORE`\|`CARDIO`. **`routineExerciseId`가 있으면 이 값은 무시되고 아래 매핑 규칙으로 덮어써진다** |
 | `plannedSets` | 선택, 양수 |
 | `completedSets` | 선택, 0 이상 |
 | `reps` | 선택, 양수 |
 | `weightKg` | 선택, 0 이상 |
-| `routineId` | 선택. 있으면 AI 루틴 수행 기록으로 연결, 없으면 자유 입력 |
+| `routineId` | 선택. 특정 운동 없이 루틴 전체에만 연결하고 싶을 때 쓰는 예전 필드(하위 호환) — 이 경우 `muscleGroup` 자동 계산은 없다 |
+| `routineExerciseId` | 선택. 있으면 그 운동을 AI 루틴에서 수행한 기록으로 연결하고, `muscleGroup`을 아래 규칙으로 백엔드가 계산해 채운다 |
+
+**`routineExerciseId`가 있을 때 `muscleGroup` 계산 규칙** — 그 운동의 `bodyPart`(AI 원본
+9개, 4.2 참고)를 다음과 같이 매핑한다:
+
+| bodyPart (9개) | muscleGroup (7개) |
+|---|---|
+| `BICEPS`, `TRICEPS` | `ARM` |
+| `GLUTES`, `THIGH`, `CALF` | `LOWER_BODY` |
+| `BACK`, `CHEST`, `SHOULDER`, `CORE` | 그대로 |
+
+`bodyPart`가 없거나(AI가 안 보낸 경우) 위 표에 없는 값이면 `muscleGroup`은 `null`로 저장된다
+— 매핑 실패로 요청 자체가 실패하지 않는다. `CARDIO`는 AI 쪽엔 없는 값이라 자유 입력에서만
+쓰인다.
 
 **응답 `201 Created`** — 3.6의 배열 원소와 동일한 모양 하나.
 
@@ -295,8 +337,8 @@ Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
 
 | 상태 | 조건 |
 |---|---|
-| `400` | 필수 필드 누락/제약 위반, `routineId`가 다른 유저의 루틴을 가리킴 |
-| `404` | `routineId`가 존재하지 않는 루틴을 가리킴 |
+| `400` | 필수 필드 누락/제약 위반, `routineId`/`routineExerciseId`가 다른 유저의 것을 가리킴 |
+| `404` | `routineId`가 존재하지 않는 루틴을, 또는 `routineExerciseId`가 존재하지 않는 루틴 운동 항목을 가리킴 |
 
 ### 3.6 `GET /api/workout-logs`
 
@@ -308,6 +350,7 @@ Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
   {
     "id": "9c1e2b7a-...",
     "routineId": "3f2a1c34-...",
+    "routineExerciseId": "5a1e2b7a-...",
     "performedAt": "2026-08-12",
     "exerciseName": "벤치프레스",
     "muscleGroup": "CHEST",
@@ -378,17 +421,29 @@ AI는 `profile`/`inbody`만으로 이름을 부르는 인사말과 오늘의 추
     "title": "COACHING AI 운동루틴",
     "exercises": [
       {
+        "id": "5a1e2b7a-...",
         "order": 1,
         "name": "등업",
         "sets": "3~4세트",
         "reps": "8~12회",
         "description": "어깨너비의 약간 넓게 바를 잡고 ...",
-        "imageUrl": "https://..."
+        "imageUrl": "https://...",
+        "bodyPart": "BACK"
       }
     ]
   }
 }
 ```
+
+`id`는 저장된 `routine_exercises.id`다. AI 응답을 그대로 돌려주는 `POST /api/chat`(3.2)
+응답에서는 아직 DB 저장 전 값이라 항상 `null`이고, DB에서 다시 조립해 내려주는
+`GET /api/chat/sessions/{sessionId}`(3.4)에서만 실제 값이 채워진다. 프론트는 이 값을
+`POST /api/workout-logs`(3.5)의 `routineExerciseId`로 그대로 돌려보낸다.
+
+`bodyPart`는 선택 필드다. AI가 분류한 부위 원본(9개 — 위 "enum 값 목록"의 `bodyPart` 행 참고)을
+매핑 없이 그대로 저장·재노출한다. AI가 이 필드를 보내지 않거나 9개 밖의 값을 보내면 `null`로
+저장된다(요청 전체를 실패시키지 않는다) — 백엔드는 Bean Validation이 아니라 화이트리스트
+체크로 걸러낸다.
 
 ### 4.3 `result` 스키마 — `type: NUTRITION`
 

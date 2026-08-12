@@ -16,6 +16,15 @@
 --
 -- [2026-08 갱신] 운동 수행 기록:
 --  * 신설: workout_logs (AI 루틴 수행 + 사용자 자유 입력을 한 테이블에 담음, routine_id는 SET NULL)
+--
+-- [2026-08 갱신] AI 부위(bodyPart) 원본 보관:
+--  * routine_exercises: body_part 추가. AI가 주는 9개 값 그대로 저장(nullable, CHECK).
+--    workout_logs.muscle_group(7개)과는 다른 값 도메인 — 여기는 매핑 없이 원본 그대로.
+--
+-- [2026-08 갱신] bodyPart → muscle_group 매핑 (routineExerciseId 방식):
+--  * workout_logs: routine_exercise_id 추가(nullable, SET NULL). routine_id는 유지.
+--    routineExerciseId가 오면 그 운동의 body_part(9개)를 muscle_group(7개)으로 매핑해 채운다.
+--  * 기존 DB에 이미 workout_logs가 있다면 ALTER TABLE로 컬럼을 수동 추가해야 한다(Flyway 미사용).
 
 create table users
 (
@@ -178,6 +187,10 @@ create table routine_exercises
     reps        text    not null,
     description text,
     image_url   text,
+    -- AI가 분류한 부위 원본(9개). AI가 안 줄 수 있어 nullable — workout_logs.muscle_group(7개)으로
+    -- 매핑하지 않고 그대로 보관한다(나중 분석용).
+    body_part   text check (body_part in
+                 ('BACK', 'CHEST', 'BICEPS', 'TRICEPS', 'SHOULDER', 'CORE', 'GLUTES', 'THIGH', 'CALF')),
     unique (routine_id, order_no)
 );
 
@@ -186,19 +199,21 @@ create table routine_exercises
 -- cascade로 걸면 채팅 세션 삭제 시 운동 이력이 통째로 날아간다.
 create table workout_logs
 (
-    id             uuid primary key       default gen_random_uuid(),
-    user_id        uuid          not null references users (id) on delete cascade,
-    routine_id     uuid          references routines (id) on delete set null,
-    performed_at   date          not null,
-    exercise_name  text          not null,
-    -- 부위. AI 응답에 해당 필드가 추가되면 채워짐 — 그 전까지는 nullable.
-    muscle_group   text          check (muscle_group in
-                                   ('CHEST', 'BACK', 'SHOULDER', 'ARM', 'LOWER_BODY', 'CORE', 'CARDIO')),
-    planned_sets   integer       check (planned_sets > 0),   -- 추천 세트 수 스냅샷(완료율 계산용)
-    completed_sets integer       check (completed_sets >= 0),
-    reps           integer       check (reps > 0),
-    weight_kg      numeric(5, 2) check (weight_kg >= 0),
-    created_at     timestamptz   not null default now()
+    id                   uuid primary key    default gen_random_uuid(),
+    user_id              uuid          not null references users (id) on delete cascade,
+    routine_id           uuid          references routines (id) on delete set null,
+    -- 어떤 운동을 수행했는지 특정. routine_id처럼 SET NULL — 세션/루틴이 지워져도 이력은 남는다.
+    routine_exercise_id  uuid          references routine_exercises (id) on delete set null,
+    performed_at         date          not null,
+    exercise_name        text          not null,
+    -- 부위. routine_exercise_id가 있으면 그 운동의 body_part(9개)를 백엔드가 7개로 매핑해 채운다.
+    muscle_group         text          check (muscle_group in
+                                         ('CHEST', 'BACK', 'SHOULDER', 'ARM', 'LOWER_BODY', 'CORE', 'CARDIO')),
+    planned_sets         integer       check (planned_sets > 0),   -- 추천 세트 수 스냅샷(완료율 계산용)
+    completed_sets       integer       check (completed_sets >= 0),
+    reps                 integer       check (reps > 0),
+    weight_kg            numeric(5, 2) check (weight_kg >= 0),
+    created_at           timestamptz   not null default now()
 );
 
 create index idx_workout_logs_user_performed

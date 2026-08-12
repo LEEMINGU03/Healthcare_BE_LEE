@@ -47,14 +47,22 @@ public class RoutineExercise {
     @Column(name = "image_url")
     private String imageUrl;
 
+    /**
+     * AI가 분류한 부위 원본(9개, DB CHECK로 검증). RoutineService가 이미 화이트리스트를
+     * 통과시킨 값만 넘기므로 여기서는 그대로 받는다.
+     */
+    @Column(name = "body_part")
+    private String bodyPart;
+
     public RoutineExercise(Integer orderNo, String name, String sets, String reps,
-                            String description, String imageUrl) {
+                            String description, String imageUrl, String bodyPart) {
         this.orderNo = orderNo;
         this.name = name;
         this.sets = sets;
         this.reps = reps;
         this.description = description;
         this.imageUrl = imageUrl;
+        this.bodyPart = bodyPart;
     }
 
     void assignRoutine(Routine routine) {
