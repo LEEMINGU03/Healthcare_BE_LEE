@@ -174,18 +174,32 @@ DB에는 `result`를 통째로 저장하지 않고 정규화된 테이블(`routi
 
 ### 3.3 `GET /api/chat/sessions`
 
-좌측 "최근 채팅내역" 목록. `type` 쿼리 파라미터로 코칭/영양 탭을 구분한다.
+좌측 "최근 채팅내역" 목록. `type` 쿼리 파라미터로 코칭/영양 탭을 구분한다. 페이지네이션은
+Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
 
-**요청**: `GET /api/chat/sessions?type=COACHING`
+**요청**: `GET /api/chat/sessions?type=COACHING&page=0&size=20`
+
+| 파라미터 | 제약 |
+|---|---|
+| `type` | 필수, `COACHING` \| `NUTRITION` |
+| `page` | 선택, 0부터 시작, 기본값 `0` |
+| `size` | 선택, 기본값 `20` |
 
 **응답 `200 OK`**
 ```json
-[
-  { "sessionId": "3f2a1c34-...", "type": "COACHING", "title": "오늘 가슴 위주로 하고 싶어", "createdAt": "2026-07-16T09:00:00+09:00" }
-]
+{
+  "content": [
+    { "sessionId": "3f2a1c34-...", "type": "COACHING", "title": "오늘 가슴 위주로 하고 싶어", "createdAt": "2026-07-16T09:00:00+09:00" }
+  ],
+  "totalElements": 1,
+  "totalPages": 1,
+  "number": 0,
+  "size": 20
+}
 ```
 
-정렬은 `createdAt` 내림차순 (세션 생성순 — 미결 사항 참고). 기록이 없으면 빈 배열.
+정렬은 `createdAt` 내림차순(세션 생성순 — 정렬 기준 자체는 여전히 미결 사항, 5장 참고).
+기록이 없으면 `content`가 빈 배열.
 
 ### 3.4 `GET /api/chat/sessions/{sessionId}`
 
@@ -306,4 +320,3 @@ AI 응답이 동기이므로(`architecture.md` 1장 확정 사항) 프론트 요
   기기 연동 값인지 미정. 현재는 3.1의 `GET`만 있다.
 - **버튼 동작**: "진행시켜", "설정 초기화", "7월 식단표 제작", "식단표 수정", "종합 데이터" —
   각각 별도 엔드포인트가 필요한지, 있다면 요청/응답이 무엇인지 미정.
-- **`GET /api/chat/sessions` 페이지네이션**: MVP는 전체 반환으로 가정. 목록이 많아지면 필요.

@@ -22,6 +22,8 @@ import com.example.Healthcare_BE.routine.service.RoutineService;
 import com.example.Healthcare_BE.user.entity.User;
 import com.example.Healthcare_BE.user.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -94,12 +96,11 @@ public class ChatService {
         return new ChatResponse(session.getId(), aiResponse.reply(), aiResponse.result());
     }
 
-    public List<ChatSessionSummaryResponse> getSessions(ChatType type) {
+    public Page<ChatSessionSummaryResponse> getSessions(ChatType type, Pageable pageable) {
         User currentUser = userService.getCurrentUser();
-        return chatSessionRepository.findByUserIdAndTypeOrderByCreatedAtDesc(currentUser.getId(), type).stream()
+        return chatSessionRepository.findByUserIdAndTypeOrderByCreatedAtDesc(currentUser.getId(), type, pageable)
                 .map(session -> new ChatSessionSummaryResponse(
-                        session.getId(), session.getType(), session.getTitle(), session.getCreatedAt()))
-                .toList();
+                        session.getId(), session.getType(), session.getTitle(), session.getCreatedAt()));
     }
 
     public ChatSessionDetailResponse getSessionDetail(UUID sessionId) {
