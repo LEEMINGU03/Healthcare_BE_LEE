@@ -1,0 +1,482 @@
+# API 명세 (MVP)
+
+프론트↔백엔드, 백엔드↔AI 서버 두 계약의 단일 출처(single source of truth). `architecture.md`의
+API 설명은 이 문서를 가리키기만 한다. 스키마는 `database.md`/`schema.sql`, 엔티티는
+`src/main/java/com/example/Healthcare_BE`의 `entity` 패키지들이 이 문서와 1:1로 맞아야 한다.
+
+## 1. 공통 규약
+
+| 항목 | 규칙 |
+|---|---|
+| Base path | `/api` (백엔드), AI 서버는 별도 base URL — 4장 참고 |
+| Content-Type | `application/json` (요청·응답 모두) |
+| 인증 | 구글 소셜 로그인 + JWT(Access/Refresh Token). `Authorization: Bearer <accessToken>` 헤더로 현재 유저를 식별한다 |
+| ID | UUID 문자열 |
+| 날짜 | `date`는 `yyyy-MM-dd`, 타임스탬프는 ISO-8601 offset (`2026-07-16T09:00:00+09:00`) |
+| enum 값 | Java enum과 동일한 대문자 표기 그대로 JSON에 노출 (아래 표) |
+| 필드 표기 | JSON은 camelCase, DB 컬럼은 snake_case — 매핑은 JPA 엔티티가 담당 |
+
+**enum 값 목록** (모두 `database.md`의 CHECK 제약과 1:1):
+
+| 필드 | 값 |
+|---|---|
+| `type` (채팅) | `COACHING`, `NUTRITION` |
+| `role` (메시지) | `USER`, `ASSISTANT` |
+| `gender` | `MALE`, `FEMALE` |
+| `previousWorkout` | `UPPER_BODY`, `LOWER_BODY` |
+| `dayOfWeek` | `MON`, `TUE`, `WED`, `THU`, `FRI`, `SAT`, `SUN` |
+| `slot` (끼니) | `BREAKFAST`, `LUNCH`, `DINNER` |
+| `muscleGroup` (운동 수행 기록) | `CHEST`, `BACK`, `SHOULDER`, `ARM`, `LOWER_BODY`, `CORE`, `CARDIO` |
+| `status` (운동 수행 기록) | `COMPLETED`, `INCOMPLETE` — DB 저장값이 아니라 조회 시점에 계산되는 값 (3.6 참고) |
+| `bodyPart` (루틴 운동, AI 원본) | `BACK`, `CHEST`, `BICEPS`, `TRICEPS`, `SHOULDER`, `CORE`, `GLUTES`, `THIGH`, `CALF` — Java 쪽은 enum이 아닌 String(4.2 참고). `muscleGroup`(7개)과 다른 값 도메인이며 매핑하지 않는다 |
+
+### 에러 응답
+
+Spring Boot 내장 **RFC 7807 ProblemDetail**을 그대로 쓴다. 커스텀 에러 DTO를 새로 만들지 않는다 —
+`@RestControllerAdvice`에서 예외별로 `ProblemDetail`을 채워 던지면 프레임워크가 직렬화한다.
+
+```json
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "인바디 기록이 없습니다.",
+  "instance": "/api/inbody/recent"
+}
+```
+
+검증 실패(요청 필드 위반)는 `400`, 리소스 없음은 `404`, AI 서버 호출 실패/타임아웃은 `502`로 통일한다.
+
+## 2. 엔드포인트 목록
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/inbody/recent` | My Recent Inbody Data 패널 |
+| GET | `/api/inbody` | 인바디 측정 이력 전체 조회 |
+| POST | `/api/inbody` | 인바디 측정 기록 저장 (회원가입2 + 재측정) |
+| POST | `/api/chat` | 코칭/영양 채팅 (메인 입력창 + 첫 인사말 포함) |
+| GET | `/api/chat/sessions` | 최근 채팅내역 목록 |
+| GET | `/api/chat/sessions/{sessionId}` | 세션 상세 (메시지 + 결과 전체) |
+| POST | `/api/workout-logs` | 운동 수행 기록 저장 (AI 루틴 수행 또는 자유 입력) |
+| GET | `/api/workout-logs` | 운동 수행 기록 이력 전체 조회 |
+
+메인 화면 상단의 "ooo님 반갑습니다 / 지난 루틴을 기반하여 오늘은 상체 하시는 날입니다"는 별도
+프로필 조회 API가 없다. **이것도 채팅의 일부** — 새 세션의 첫 AI 메시지이며 `POST /api/chat`으로
+받아온다 (3.2 참고). 이름·성별·키 등 프로필 데이터 자체는 여전히 `users` 테이블에 있고, AI 요청을
+조립할 때만 백엔드 내부에서 쓰인다 (4.1의 `profile` 객체).
+
+## 3. 프론트 → 백엔드
+
+### 3.1 `GET /api/inbody/recent`
+
+하단 My Recent Inbody Data 패널용. 수치 3개 + 막대 그래프 3줄에 대응. 유저의 최신 측정 1건.
+
+**응답 `200 OK`**
+```json
+{
+  "measuredAt": "2026-06-20",
+  "weightKg": 70.0,
+  "skeletalMuscleMassKg": 32.0,
+  "bodyFatMassKg": 12.0,
+  "bodyFatPct": 17.0,
+  "bmrKcal": 1650
+}
+```
+
+**응답 `404 Not Found`** — 측정 기록이 아직 하나도 없을 때 (프론트는 "데이터 없음" 화면을 준비해야 한다).
+
+막대 그래프의 기준 구간(정상 범위)은 프론트가 렌더링 시 계산하는 것으로 가정한다.
+
+### 3.1b `GET /api/inbody`
+
+인바디 측정 이력 전체 조회. 추이 그래프 등 대시보드에서 여러 건이 필요할 때 사용한다.
+페이지네이션 없음 — 전체 반환.
+
+**응답 `200 OK`**
+```json
+[
+  {
+    "measuredAt": "2026-06-20",
+    "weightKg": 70.0,
+    "skeletalMuscleMassKg": 32.0,
+    "bodyFatMassKg": 12.0,
+    "bodyFatPct": 17.0,
+    "bmrKcal": 1650
+  }
+]
+```
+
+`measuredAt` 내림차순(최신순)으로 정렬한다. 기록이 없으면 `200`과 함께 빈 배열 — 3.1과 달리
+404가 아니다(이력 조회는 "없음"이 곧 에러가 아닌 정상 상태).
+
+### 3.1c `POST /api/inbody`
+
+인바디 측정 기록 저장. 회원가입2(인바디 측정 입력)와 이후 재측정 둘 다 이 엔드포인트를 쓴다
+(`signup_profile_api_spec.md` 2-4 참고).
+
+**요청**
+```json
+{
+  "measuredAt": "2026-06-20",
+  "weightKg": 70.0,
+  "bmrKcal": 1650,
+  "skeletalMuscleMassKg": 32.0,
+  "bodyFatMassKg": 12.0,
+  "bodyFatPct": 17.0
+}
+```
+
+| 필드 | 제약 |
+|---|---|
+| `measuredAt` | 필수 |
+| `weightKg` | 필수, 양수 |
+| `bmrKcal` | 필수, 양수 |
+| `skeletalMuscleMassKg` | 필수, 양수 |
+| `bodyFatMassKg` | 필수, 0 이상 |
+| `bodyFatPct` | 선택, 0 이상 |
+
+**응답 `201 Created`** — 3.1b의 배열 원소와 동일한 모양 하나.
+
+**에러**
+
+| 상태 | 조건 |
+|---|---|
+| `400` | 필수 필드 누락/제약 위반 |
+| `409` | 같은 유저·같은 `measuredAt`의 기록이 이미 있음 |
+
+### 3.2 `POST /api/chat`
+
+코칭 AI / 영양 AI 채팅 공통. 우측 탭 전환, 메인 화면 하단 입력창, **그리고 최초 진입 시의 인사말**까지
+전부 이 엔드포인트 하나로 처리한다. 사이트 최초 진입 시 메인 채팅은 운동 AI이므로 `type`은
+`COACHING`이 기본값이다.
+
+**두 가지 호출 패턴이 있다.**
+
+1. **인사말 요청** — `sessionId: null`, `message: null`(또는 생략). 페이지 최초 진입 시,
+   또는 좌측 "새 채팅시작"을 눌렀을 때 프론트가 자동으로 호출한다. 사용자가 아직 아무 말도
+   하지 않은 상태이므로 `USER` 메시지는 저장하지 않고, AI가 이름·이전 운동·인바디를 바탕으로
+   생성한 인사말(+추천)만 `ASSISTANT` 메시지로 저장한다. 이 응답의 `reply`가 메인 화면 상단
+   "ooo님 반갑습니다 / 지난 루틴을 기반하여 오늘은 상체 하시는 날입니다" 자리에 그대로 들어간다.
+2. **일반 대화** — `message`가 채워진 경우. 기존과 동일하게 `USER` + `ASSISTANT` 메시지를 저장한다.
+
+**요청 (일반 대화)**
+```json
+{
+  "type": "COACHING",
+  "message": "오늘 가슴 위주로 하고 싶어",
+  "sessionId": null,
+  "settings": {
+    "upperBody": "가슴",
+    "lowerBody": null,
+    "durationMinutes": 60
+  }
+}
+```
+
+**요청 (인사말)**
+```json
+{ "type": "COACHING", "message": null, "sessionId": null, "settings": null }
+```
+
+| 필드 | 제약 |
+|---|---|
+| `type` | 필수, `COACHING` \| `NUTRITION` |
+| `message` | 선택. **`sessionId`가 null일 때만** 비워둘 수 있다(인사말 요청). `sessionId`가 있는데 `message`가 비어있으면 `400` — 기존 대화에 인사말을 다시 요청하는 것은 정의되지 않는다 |
+| `sessionId` | 선택. null이면 새 세션 생성, 값이 있으면 기존 세션에 이어붙임 |
+| `settings.upperBody` / `lowerBody` | 선택 문자열. 미선택 시 null |
+| `settings.durationMinutes` | 선택, 양수 |
+
+`sessionId`가 null일 때 새 세션의 `title`은, 인사말 요청이면 "새 채팅"으로 고정하고 일반 대화면
+`message`를 20자 이내로 잘라 채운다 (가정 — 미결 사항 참고).
+
+**응답 `200 OK`**
+```json
+{
+  "sessionId": "3f2a1c34-...",
+  "reply": "말씀하신대로 상체루틴 운동루틴을 추천하여 제작하겠습니다.",
+  "result": { "routine": { "...": "4장 result 스키마 참고" } }
+}
+```
+
+`reply`는 말풍선 텍스트, `result`는 카드/표로 렌더링할 구조화 데이터다 (`type`에 따라 `routine`
+또는 `mealPlan`, AI가 되묻기만 하는 턴이나 인사말 응답에서는 `null`).
+
+DB에는 `result`를 통째로 저장하지 않고 정규화된 테이블(`routines`/`routine_exercises`,
+`meal_plans`/`meal_plan_days`/`meal_plan_meals`)에 나눠 담는다 — 이 응답의 JSON 모양은 항상
+그대로이고, 백엔드가 저장 시 분해하고 조회 시 다시 조립한다.
+
+**에러**
+
+| 상태 | 조건 |
+|---|---|
+| `400` | `type` 누락, `sessionId`가 있는데 `message`가 비어있음, `sessionId`가 다른 유저/타입의 세션을 가리킴 |
+| `404` | `sessionId`가 존재하지 않음 |
+| `502` | AI 서버 호출 실패, 타임아웃, 응답 파싱 실패 |
+
+### 3.3 `GET /api/chat/sessions`
+
+좌측 "최근 채팅내역" 목록. `type` 쿼리 파라미터로 코칭/영양 탭을 구분한다. 페이지네이션은
+Spring Data의 기본 `Page` 응답 형식을 그대로 쓴다.
+
+**요청**: `GET /api/chat/sessions?type=COACHING&page=0&size=20`
+
+| 파라미터 | 제약 |
+|---|---|
+| `type` | 필수, `COACHING` \| `NUTRITION` |
+| `page` | 선택, 0부터 시작, 기본값 `0` |
+| `size` | 선택, 기본값 `20` |
+
+**응답 `200 OK`**
+```json
+{
+  "content": [
+    { "sessionId": "3f2a1c34-...", "type": "COACHING", "title": "오늘 가슴 위주로 하고 싶어", "createdAt": "2026-07-16T09:00:00+09:00" }
+  ],
+  "totalElements": 1,
+  "totalPages": 1,
+  "number": 0,
+  "size": 20
+}
+```
+
+정렬은 `createdAt` 내림차순(세션 생성순 — 정렬 기준 자체는 여전히 미결 사항, 5장 참고).
+기록이 없으면 `content`가 빈 배열.
+
+### 3.4 `GET /api/chat/sessions/{sessionId}`
+
+세션 상세. 메시지 전체와, 어시스턴트 메시지에 딸린 루틴/식단표 결과를 함께 재조립해 반환한다.
+
+**응답 `200 OK`**
+```json
+{
+  "sessionId": "3f2a1c34-...",
+  "type": "COACHING",
+  "messages": [
+    { "role": "USER", "content": "오늘 가슴 위주로 하고 싶어", "result": null },
+    {
+      "role": "ASSISTANT",
+      "content": "말씀하신대로...",
+      "result": {
+        "routine": {
+          "title": "COACHING AI 운동루틴",
+          "exercises": [
+            { "id": "5a1e2b7a-...", "order": 1, "name": "벤치프레스", "sets": "3~4세트", "reps": "8~12회",
+              "description": "...", "imageUrl": "https://...", "bodyPart": "CHEST" }
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+`result.routine.exercises[].bodyPart`는 4.2와 동일한 필드다 — 저장된 `routine_exercises.body_part`를
+그대로 재조립해 실어준다.
+
+**응답 `404 Not Found`** — `sessionId`가 존재하지 않음.
+
+### 3.5 `POST /api/workout-logs`
+
+운동 수행 기록 저장. AI 루틴의 특정 운동을 수행한 기록(`routineExerciseId` 있음)과 사용자
+자유 입력(`routineExerciseId` 없음) 둘 다 이 엔드포인트 하나로 받는다. `routineExerciseId`는
+3.4/4.2 응답의 `result.routine.exercises[].id`를 그대로 돌려보내면 된다.
+
+**요청 (AI 루틴 운동 수행)**
+```json
+{
+  "performedAt": "2026-08-12",
+  "exerciseName": "벤치프레스",
+  "plannedSets": 4,
+  "completedSets": 3,
+  "reps": 10,
+  "weightKg": 60.0,
+  "routineExerciseId": "5a1e2b7a-..."
+}
+```
+
+**요청 (자유 입력)**
+```json
+{
+  "performedAt": "2026-08-12",
+  "exerciseName": "런지",
+  "muscleGroup": "LOWER_BODY",
+  "completedSets": 3,
+  "reps": 12,
+  "weightKg": null
+}
+```
+
+| 필드 | 제약 |
+|---|---|
+| `performedAt` | 필수 |
+| `exerciseName` | 필수 |
+| `muscleGroup` | 선택. `CHEST`\|`BACK`\|`SHOULDER`\|`ARM`\|`LOWER_BODY`\|`CORE`\|`CARDIO`. **`routineExerciseId`가 있으면 이 값은 무시되고 아래 매핑 규칙으로 덮어써진다** |
+| `plannedSets` | 선택, 양수 |
+| `completedSets` | 선택, 0 이상 |
+| `reps` | 선택, 양수 |
+| `weightKg` | 선택, 0 이상 |
+| `routineId` | 선택. 특정 운동 없이 루틴 전체에만 연결하고 싶을 때 쓰는 예전 필드(하위 호환) — 이 경우 `muscleGroup` 자동 계산은 없다 |
+| `routineExerciseId` | 선택. 있으면 그 운동을 AI 루틴에서 수행한 기록으로 연결하고, `muscleGroup`을 아래 규칙으로 백엔드가 계산해 채운다 |
+
+**`routineExerciseId`가 있을 때 `muscleGroup` 계산 규칙** — 그 운동의 `bodyPart`(AI 원본
+9개, 4.2 참고)를 다음과 같이 매핑한다:
+
+| bodyPart (9개) | muscleGroup (7개) |
+|---|---|
+| `BICEPS`, `TRICEPS` | `ARM` |
+| `GLUTES`, `THIGH`, `CALF` | `LOWER_BODY` |
+| `BACK`, `CHEST`, `SHOULDER`, `CORE` | 그대로 |
+
+`bodyPart`가 없거나(AI가 안 보낸 경우) 위 표에 없는 값이면 `muscleGroup`은 `null`로 저장된다
+— 매핑 실패로 요청 자체가 실패하지 않는다. `CARDIO`는 AI 쪽엔 없는 값이라 자유 입력에서만
+쓰인다.
+
+**응답 `201 Created`** — 3.6의 배열 원소와 동일한 모양 하나.
+
+**에러**
+
+| 상태 | 조건 |
+|---|---|
+| `400` | 필수 필드 누락/제약 위반, `routineId`/`routineExerciseId`가 다른 유저의 것을 가리킴 |
+| `404` | `routineId`가 존재하지 않는 루틴을, 또는 `routineExerciseId`가 존재하지 않는 루틴 운동 항목을 가리킴 |
+
+### 3.6 `GET /api/workout-logs`
+
+로그인 유저의 운동 수행 기록 이력 전체 조회. 페이지네이션 없음. `performedAt` 내림차순.
+
+**응답 `200 OK`**
+```json
+[
+  {
+    "id": "9c1e2b7a-...",
+    "routineId": "3f2a1c34-...",
+    "routineExerciseId": "5a1e2b7a-...",
+    "performedAt": "2026-08-12",
+    "exerciseName": "벤치프레스",
+    "muscleGroup": "CHEST",
+    "plannedSets": 4,
+    "completedSets": 3,
+    "reps": 10,
+    "weightKg": 60.0,
+    "completionRate": 0.75,
+    "status": "INCOMPLETE"
+  }
+]
+```
+
+`completionRate`/`status`는 DB에 저장된 값이 아니라 `completedSets / plannedSets`로 조회
+시점에 계산된다 — 완료 기준(현재 80%)이 바뀌어도 과거 기록을 재계산할 필요가 없다.
+`plannedSets`가 없거나 0이면(자유 입력) `completionRate`는 `1`, `status`는 `COMPLETED`로
+고정한다. 기록이 없으면 빈 배열.
+
+## 4. 백엔드 → AI 서버
+
+AI 서버 base URL·인증 방식이 확정되어 실제로 연동되어 있다 (`ai.base-url`, 인증 없음).
+아래는 운영 중인 계약이다.
+
+### 4.1 `POST {ai.base-url}/generate`
+
+```json
+{
+  "type": "COACHING",
+  "message": "오늘 가슴 위주로 하고 싶어",
+  "settings": { "upperBody": "가슴", "lowerBody": null, "durationMinutes": 60 },
+  "profile": {
+    "name": "홍길동", "gender": "MALE", "heightCm": 175.0,
+    "targetGainKg": 3.0, "previousWorkout": "UPPER_BODY"
+  },
+  "inbody": {
+    "measuredAt": "2026-06-20", "weightKg": 70.0,
+    "skeletalMuscleMassKg": 32.0, "bodyFatMassKg": 12.0, "bmrKcal": 1650
+  },
+  "history": [
+    { "role": "USER", "content": "..." },
+    { "role": "ASSISTANT", "content": "..." }
+  ]
+}
+```
+
+`profile.name`은 3.2의 인사말 요청("ooo님 반갑습니다")을 AI가 생성하려면 반드시 필요해 추가했다 —
+이전에는 프론트가 별도 프로필 조회로 이름을 표시했지만, 이제 인사말 자체를 AI가 만들기 때문이다.
+
+`inbody`는 기록이 없으면 `null`로 보낸다 (3.1의 404 케이스와 대응).
+
+**인사말 요청**(3.2의 `message: null` 패턴)일 때는 `message`를 `null`로, `history`를 빈 배열로 보낸다.
+AI는 `profile`/`inbody`만으로 이름을 부르는 인사말과 오늘의 추천을 생성한다 — "오늘의 추천을 어떤
+근거로 정할지"는 AI 내부 로직이며 이 계약은 입력만 규정한다.
+
+**응답**
+```json
+{ "reply": "...", "result": null }
+```
+
+### 4.2 `result` 스키마 — `type: COACHING`
+
+와이어프레임의 운동루틴 카드(운동명 / 상세 설명 / 3~4세트 8~12회 / 이미지)에 대응.
+`routine_exercises` 테이블과 1:1.
+
+```json
+{
+  "routine": {
+    "title": "COACHING AI 운동루틴",
+    "exercises": [
+      {
+        "id": "5a1e2b7a-...",
+        "order": 1,
+        "name": "등업",
+        "sets": "3~4세트",
+        "reps": "8~12회",
+        "description": "어깨너비의 약간 넓게 바를 잡고 ...",
+        "imageUrl": "https://...",
+        "bodyPart": "BACK"
+      }
+    ]
+  }
+}
+```
+
+`id`는 저장된 `routine_exercises.id`다. AI 응답을 그대로 돌려주는 `POST /api/chat`(3.2)
+응답에서는 아직 DB 저장 전 값이라 항상 `null`이고, DB에서 다시 조립해 내려주는
+`GET /api/chat/sessions/{sessionId}`(3.4)에서만 실제 값이 채워진다. 프론트는 이 값을
+`POST /api/workout-logs`(3.5)의 `routineExerciseId`로 그대로 돌려보낸다.
+
+`bodyPart`는 선택 필드다. AI가 분류한 부위 원본(9개 — 위 "enum 값 목록"의 `bodyPart` 행 참고)을
+매핑 없이 그대로 저장·재노출한다. AI가 이 필드를 보내지 않거나 9개 밖의 값을 보내면 `null`로
+저장된다(요청 전체를 실패시키지 않는다) — 백엔드는 Bean Validation이 아니라 화이트리스트
+체크로 걸러낸다.
+
+### 4.3 `result` 스키마 — `type: NUTRITION`
+
+와이어프레임의 주간 식단표(MON~SUN × 3행)에 대응. 3행은 아침/점심/저녁으로 가정.
+`meal_plan_days`/`meal_plan_meals` 테이블과 1:1.
+
+```json
+{
+  "mealPlan": {
+    "title": "NUTRITION AI 식단표",
+    "days": [
+      {
+        "dayOfWeek": "MON",
+        "meals": [
+          { "slot": "BREAKFAST", "menu": "...", "calories": 500,
+            "carbsG": 60, "proteinG": 30, "fatG": 15 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### 4.4 타임아웃·재시도
+
+AI 응답이 동기이므로(`architecture.md` 1장 확정 사항) 프론트 요청이 그동안 블로킹된다. 백엔드 → AI
+호출에 **연결 타임아웃 3초, 읽기 타임아웃 30초**를 건다 (가정 — AI 서버의 실제 응답 시간에 따라
+조정 필요). 재시도는 하지 않는다 — 실패 시 3.2의 `502`를 그대로 프론트에 전달한다.
+
+## 5. 미결 사항
+
+아래는 API 명세에 직접 영향을 주지만 아직 답을 받지 못한 것들이다. 확정되는 대로 이 문서와
+`architecture.md`/`database.md`를 함께 갱신한다.
+
+- **버튼 동작**: "진행시켜", "설정 초기화", "7월 식단표 제작", "식단표 수정", "종합 데이터" —
+  각각 별도 엔드포인트가 필요한지, 있다면 요청/응답이 무엇인지 미정.
