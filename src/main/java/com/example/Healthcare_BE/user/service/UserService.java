@@ -1,17 +1,18 @@
 package com.example.Healthcare_BE.user.service;
 
+import com.example.Healthcare_BE.auth.service.UnauthenticatedException;
 import com.example.Healthcare_BE.user.dto.UserProfileDto;
 import com.example.Healthcare_BE.user.entity.User;
 import com.example.Healthcare_BE.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
 /**
- * MVP는 로그인이 없어 고정 더미 유저 1명을 "현재 유저"로 취급한다.
- * 인증 도입 시 getCurrentUser()만 JWT 기반 조회로 교체하면 된다 (stack-architecture 메모리 참고).
+ * "현재 유저"는 JwtAuthenticationFilter가 Authorization 헤더의 Access Token을 검증해
+ * SecurityContext에 세팅해준 유저 id로 조회한다 (principal = UUID).
  */
 @Service
 @RequiredArgsConstructor
@@ -19,13 +20,13 @@ public class UserService {
 
     private final UserRepository userRepository;
 
-    @Value("${app.mvp.dummy-user-id}")
-    private String dummyUserId;
-
     public User getCurrentUser() {
-        UUID id = UUID.fromString(dummyUserId);
-        return userRepository.findById(id)
-                .orElseThrow(() -> new IllegalStateException("더미 유저가 존재하지 않습니다: " + id));
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof UUID userId)) {
+            throw new UnauthenticatedException("로그인이 필요합니다.");
+        }
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new UnauthenticatedException("유저를 찾을 수 없습니다: " + userId));
     }
 
     public UserProfileDto getProfile() {

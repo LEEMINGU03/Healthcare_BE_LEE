@@ -1,5 +1,5 @@
 -- Healthcare_BE 스키마 적용 스크립트
--- Supabase SQL Editor에 그대로 붙여넣어 실행한다.
+-- DB 클라이언트(psql/pgAdmin 등)에 그대로 붙여넣어 실행한다.
 -- 각 테이블의 설계 근거·인덱스 설명은 database.md 3장 참고 — 이 파일은 그 DDL을 실행 순서대로 합친 것.
 -- 스키마를 바꿀 때는 database.md와 이 파일을 함께 수정한다.
 --
@@ -9,19 +9,23 @@
 --  * 신설: user_preferences, user_ai_settings, user_notification_settings
 --  * 다중선택은 text[] 배열, 허용값 검증은 백엔드에서 수행(주석 참고)
 --  * '계정·보안'(비번/2단계인증/소셜연동)은 인증 도입 단계로 미룸 — 스키마 미포함
+--
+-- [2026-07 갱신] 구글 소셜 로그인 도입:
+--  * 신설: user_social_accounts (유저 1명이 여러 provider를 연결할 수 있는 구조. 카카오 등 추후 추가 예정)
+--  * 신설: refresh_tokens (JWT access token 재발급용. DB에 저장해 즉시 무효화 가능하게 함)
 
 create table users
 (
     id                         uuid primary key       default gen_random_uuid(),
     name                       text          not null,                                                  -- 이름
     nickname                   text,                                                                    -- 닉네임
-    gender                     text          not null check (gender in ('MALE', 'FEMALE')),-- 성별
+    gender                     text          check (gender in ('MALE', 'FEMALE')),                      -- 성별 (소셜 로그인 직후엔 미입력)
     birth_date                 date,                                                                    -- 생년월일
     email                      text,                                                                    -- 이메일(표시용, 인증 추후)
     phone                      text,                                                                    -- 휴대전화 번호
     bio                        text,                                                                    -- 자기소개
     profile_image_url          text,                                                                    -- 프로필 이미지 URL
-    height_cm                  numeric(4, 1) not null check (height_cm > 0),                            -- 키
+    height_cm                  numeric(4, 1) check (height_cm > 0),                                     -- 키 (소셜 로그인 직후엔 미입력)
 
     -- 운동 목표(복수 선택). 허용값(백엔드 검증):
     --   MUSCLE_GAIN, FAT_LOSS, FITNESS, POSTURE, REHAB, HABIT
@@ -39,6 +43,30 @@ create table users
 
     previous_workout           text check (previous_workout in ('UPPER_BODY', 'LOWER_BODY')),           -- 전날 운동
     created_at                 timestamptz   not null default now()
+);
+
+-- 소셜 로그인 연결 정보. 유저 1명이 여러 provider를 연결할 수 있다 (구글+카카오 등).
+create table user_social_accounts
+(
+    id               uuid primary key     default gen_random_uuid(),
+    user_id          uuid        not null references users (id) on delete cascade,
+    provider         text        not null check (provider in ('GOOGLE')), -- 추후 KAKAO 등 추가
+    provider_user_id text        not null,                                -- 구글 sub
+    created_at       timestamptz not null default now(),
+    unique (provider, provider_user_id), -- 같은 소셜 계정이 다른 유저에 중복 연결되는 것 방지
+    unique (user_id, provider)           -- 한 유저가 같은 provider를 두 번 연결하는 것 방지
+);
+
+-- 로그인 세션 대신 JWT(access/refresh token) 방식을 쓰기 위한 refresh token 저장소.
+-- access token은 서명만 검증하는 stateless JWT라 DB에 없다. refresh token도 JWT이지만
+-- 발급한 문자열을 여기 그대로 저장해, 로그아웃 등으로 이 행을 지우면 만료 전이라도 즉시 무효화된다.
+create table refresh_tokens
+(
+    id         uuid primary key     default gen_random_uuid(),
+    user_id    uuid        not null references users (id) on delete cascade,
+    token      text        not null unique,
+    expires_at timestamptz not null,
+    created_at timestamptz not null default now()
 );
 
 create table inbody_records

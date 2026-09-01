@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Spring Boot skeleton (Spring Initializr) with no application code yet beyond the default entry point. The MVP design is agreed but not implemented.
 
-**Read `Docs/architecture.md` first** — it holds the agreed MVP architecture: system topology, the backend/AI API contracts, the Supabase schema, and an explicit "미결 사항" list of things the user has not decided. Wireframes it was derived from are in `Docs/*.png`.
+**Read `Docs/architecture.md` first** — it holds the agreed MVP architecture: system topology, the backend/AI API contracts, the DB schema, and an explicit "미결 사항" list of things the user has not decided. Wireframes it was derived from are in `Docs/*.png`.
 
 Key points that shape any work here:
-- The backend is a **context assembler** between a front server and a single AI server: it reads profile/inbody/chat history from Supabase and passes them to the AI server, which stays stateless and never touches the DB.
+- The backend is a **context assembler** between a front server and a single AI server: it reads profile/inbody/chat history from the DB and passes them to the AI server, which stays stateless and never touches the DB.
 - The backend **defines the API contract** for both the front and the AI server; the AI-side contract in `Docs/architecture.md` is a draft still pending agreement with the AI server owner.
-- MVP has **no login** — a single seeded dummy user. Auth (Supabase social login, JWT verification) comes later.
-- Deployment target is Railway; DB is Supabase Postgres.
+- Auth is implemented: Google social login (`spring-boot-starter-oauth2-client`) + self-issued JWT (Access/Refresh Token, both JWT — see `com.example.Healthcare_BE.auth`). The old single-seeded-dummy-user approach is retired; `UserService.getCurrentUser()` now resolves the real logged-in user from the `JwtAuthenticationFilter`-populated `SecurityContext`.
+- Deployment target is Railway; DB is PostgreSQL. Local dev now uses a local PostgreSQL instance; production DB hosting is not yet decided (Supabase is no longer used).
 
 ## Stack
 
